@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+  <meta name="theme-color" id="theme-color" content="#06060e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="description" content="Mangaud-Chatting — Zero-persistence, peer-to-peer encrypted messaging.">
+  <meta name="keywords" content="encrypted chat, private messenger, p2p, ephemeral">
+  <meta name="author" content="Mangaud">
+  <meta name="robots" content="index, follow">
+  <meta property="og:title" content="MANGAUD - Encrypted P2P Messenger">
+  <meta property="og:description" content="Zero-persistence, peer-to-peer encrypted messaging. Rooms self-destruct.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://mangaud-chatting.netlify.app">
+  <meta property="og:image" content="/assets/icon-512.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="MANGAUD - Encrypted P2P Messenger">
+  <meta name="twitter:description" content="Zero-persistence, peer-to-peer encrypted messaging.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' blob: mediastream:; connect-src 'self' https: wss:; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta http-equiv="X-Frame-Options" content="DENY">
+  <meta http-equiv="X-XSS-Protection" content="1; mode=block">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <title>MANGAUD - Encrypted P2P Messenger</title>
+</head>
+<body>
+  <div id="app" role="main">
+
+    <!-- Skeleton Loading -->
+    <div id="skeleton" class="skeleton active">
+      <div class="skeleton-inner">
+        <div class="skeleton-logo pulse"></div>
+        <div class="skeleton-line pulse" style="width:180px;height:20px;margin:16px auto 8px"></div>
+        <div class="skeleton-line pulse" style="width:120px;height:14px;margin:0 auto"></div>
+        <div class="skeleton-btn pulse" style="margin-top:40px"></div>
+        <div class="skeleton-btn pulse"></div>
+      </div>
+    </div>
+
+    <!-- Landing -->
+    <div id="screen-landing" class="screen active" role="tabpanel" aria-label="Landing">
+      <div class="landing-inner">
+        <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">&#x1F319;</button>
+        <img src="/assets/logo.jpeg" alt="Mangaud-Chatting" class="brand-logo" width="96" height="96">
+        <h1 class="app-title">MANGAUD</h1>
+        <p class="tagline">Zero servers. Zero persistence.</p>
+        <div class="landing-actions">
+          <button class="btn btn-primary" id="btn-host" aria-label="Host a new chat room">Host a Room</button>
+          <button class="btn btn-outline" id="btn-join" aria-label="Join an existing chat room">Join a Room</button>
+        </div>
+        <p class="disclaimer">Messages exist only in RAM.<br>Close or idle &rarr; instant destruction.</p>
+        <p class="app-version" aria-label="App version">v2.0.0</p>
+        <p class="landing-footer">Made by <a href="https://github.com/mangalam-gaud" target="_blank" rel="noopener noreferrer">MANGAUD</a></p>
+      </div>
+    </div>
+
+    <!-- Host -->
+    <div id="screen-host" class="screen" role="tabpanel" aria-label="Host Room">
+      <header class="screen-header">
+        <button class="btn-icon" id="btn-host-back" aria-label="Go back">&larr;</button>
+        <img src="/assets/logo.jpeg" alt="" class="header-logo" width="24" height="24">
+        <span class="header-title">Host Room</span>
+        <span class="badge badge-host">HOST</span>
+        <button class="btn-icon btn-info" id="btn-host-details" title="Room details" aria-label="Room details">&#x2139;</button>
+        <div class="header-spacer"></div>
+        <button class="theme-toggle btn-icon" id="theme-toggle-host" aria-label="Toggle theme">&#x1F319;</button>
+      </header>
+      <div class="code-section">
+        <div class="code-digits" id="host-code" aria-label="Room code" role="text">-&nbsp;-&nbsp;-&nbsp;-&nbsp;-&nbsp;-&nbsp;-&nbsp;-</div>
+        <div class="qr-container" id="qr-host" aria-label="QR code"><div class="qr-placeholder pulse" style="width:160px;height:160px">Generating QR&hellip;</div></div>
+        <p class="status-text" id="host-status"><span class="pulse-dot"></span>Waiting for a guest&hellip;</p>
+      </div>
+      <div class="host-actions">
+        <button class="btn btn-primary" id="btn-copy-code" aria-label="Copy room code">Copy Code</button>
+        <button class="btn btn-outline" id="btn-share-code" aria-label="Share room code">Share</button>
+      </div>
+    </div>
+
+    <!-- Join -->
+    <div id="screen-join" class="screen" role="tabpanel" aria-label="Join Room">
+      <header class="screen-header">
+        <button class="btn-icon" id="btn-join-back" aria-label="Go back">&larr;</button>
+        <img src="/assets/logo.jpeg" alt="" class="header-logo" width="24" height="24">
+        <span class="header-title">Join Room</span>
+        <div class="header-spacer"></div>
+        <button class="theme-toggle btn-icon" id="theme-toggle-join" aria-label="Toggle theme">&#x1F319;</button>
+      </header>
+      <div class="code-section">
+        <div class="code-digits" id="join-code-display" aria-label="Entered code" role="text">&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;</div>
+        <div class="ciw">
+          <input type="text" id="join-code-input" placeholder="Enter 8-character code" maxlength="8" pattern="[0-9A-Z]{8}" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" inputmode="text" aria-label="Room code">
+        </div>
+        <div>
+          <button class="btn btn-primary" id="btn-join-submit" disabled>Join Room</button>
+        </div>
+      </div>
+      <div class="join-actions">
+        <button class="btn btn-outline" id="btn-scan-qr" aria-label="Scan QR code">Scan QR Code</button>
+      </div>
+    </div>
+
+    <!-- Name Prompt -->
+    <div id="name-overlay" class="overlay hidden" role="dialog" aria-label="Enter name">
+      <div class="name-prompt">
+        <div class="name-prompt-card">
+          <img src="/assets/logo.jpeg" alt="" class="prompt-logo" width="48" height="48">
+          <h2 class="name-prompt-title" id="name-prompt-title">Enter your name</h2>
+          <input type="text" id="name-input" class="name-input" placeholder="Your name..." maxlength="20" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Your name">
+          <div class="name-prompt-actions">
+            <button class="btn btn-primary" id="name-submit">Continue</button>
+            <button class="btn btn-outline" id="name-cancel">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chat -->
+    <div id="screen-chat" class="screen" role="tabpanel" aria-label="Chat room">
+      <header class="chat-header">
+        <div class="chat-header-top">
+          <div class="chat-header-info">
+            <img src="/assets/logo.jpeg" alt="" class="header-logo" width="22" height="22">
+            <span class="room-badge" id="chat-code" aria-label="Room code">000000</span>
+            <button class="btn-icon btn-info" id="btn-details" title="Room details" aria-label="Room details">&#x2139;</button>
+            <span class="status-dot connected" id="chat-status-dot" aria-hidden="true"></span>
+            <span class="status-label" id="chat-status-label">Connected</span>
+            <span class="chat-peer-name hidden" id="chat-peer-name"></span>
+            <span class="enc-badge hidden" id="chat-encrypt-badge" title="End-to-end encrypted">&#x1F512;</span>
+          </div>
+          <div class="chat-header-actions">
+            <button class="btn-icon btn-info hidden" id="btn-users-panel" title="Connected users" aria-label="Show connected users">&#x1F465;</button>
+            <button class="btn-icon btn-info" id="btn-sound-toggle" title="Toggle sound" aria-label="Toggle sound" data-sound="on">&#x1F50A;</button>
+            <button class="theme-toggle btn-icon" id="theme-toggle-chat" aria-label="Toggle theme">&#x1F319;</button>
+            <button class="btn-icon btn-danger" id="btn-destroy" title="Destroy room" aria-label="Destroy room">&times;</button>
+          </div>
+        </div>
+        <div class="chat-header-bottom">
+          <div class="chat-header-status" id="typing-indicator-host" aria-live="polite" aria-atomic="true"></div>
+        </div>
+      </header>
+      <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-label="Chat messages">
+        <div class="chat-empty">Connect to start chatting&hellip;</div>
+      </div>
+      <button class="scroll-bottom-btn hidden" id="scroll-bottom-btn" aria-label="Scroll to bottom" title="New messages below">&#x2193;</button>
+      <div id="typing-indicator-guest" class="typing-indicator" aria-live="polite" aria-atomic="true"></div>
+      <div class="chat-input-area">
+        <textarea id="chat-input" rows="1" placeholder="Type a message&hellip;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Message input"></textarea>
+        <button class="btn btn-primary btn-send" id="btn-send" aria-label="Send message">Send</button>
+      </div>
+    </div>
+
+    <!-- Details Popup -->
+    <div id="details-overlay" class="overlay hidden" role="dialog" aria-label="Room Details">
+      <div class="details-panel">
+        <div class="details-header">
+          <img src="/assets/logo.jpeg" alt="" class="header-logo" width="24" height="24">
+          <h2 class="details-title">Room Details</h2>
+          <button class="btn-icon" id="btn-details-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="details-body">
+          <div class="details-code-section">
+            <span class="details-code-label">Share this code</span>
+            <div class="details-code-digits" id="details-code-display" aria-label="Room code">000000</div>
+          </div>
+          <div class="details-qr-section">
+            <div class="details-qr-container" id="details-qr"></div>
+          </div>
+          <div class="details-actions">
+            <button class="btn btn-primary" id="details-btn-copy">Copy Code</button>
+            <button class="btn btn-outline" id="details-btn-share">Share</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Users Panel -->
+    <div id="users-overlay" class="overlay hidden" role="dialog" aria-label="Connected Users">
+      <div class="users-panel">
+        <div class="users-header">
+          <h2 class="users-title">Connected Users</h2>
+          <button class="btn-icon" id="btn-users-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="users-body" id="users-list">
+          <div class="users-empty">No users connected</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scanner Overlay -->
+  <div id="scanner-overlay" class="overlay hidden" role="dialog" aria-label="QR Code Scanner">
+    <div class="scanner-container">
+      <video id="scanner-video" autoplay playsinline muted aria-hidden="true"></video>
+      <canvas id="scanner-canvas" hidden aria-hidden="true"></canvas>
+      <div class="scanner-frame" aria-hidden="true"></div>
+      <p class="scanner-hint">Align QR code within the frame</p>
+      <button class="btn btn-outline" id="btn-scanner-close" aria-label="Close scanner">Cancel</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden" role="alert" aria-live="assertive"></div>
+
+  <!-- PWA Install Banner -->
+  <div id="install-banner" class="install-banner hidden" role="dialog" aria-label="Install app">
+    <div class="install-banner-content">
+      <img src="/assets/logo.jpeg" alt="" class="install-icon" width="28" height="28">
+      <div class="install-banner-text">
+        <strong>Install MANGAUD</strong>
+        <span>Add to home screen for best experience</span>
+      </div>
+      <div class="install-banner-actions">
+        <button class="btn-install" id="install-btn">Install</button>
+        <button class="btn-install-dismiss" id="install-dismiss">Not now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SW Update Banner -->
+  <div id="sw-update-banner" class="sw-update-banner hidden" role="alert">
+    <div class="sw-update-content">
+      <span class="sw-update-icon">&#x1F504;</span>
+      <span class="sw-update-text">Update available</span>
+      <div class="sw-update-actions">
+        <button id="sw-update-btn">Refresh</button>
+        <button id="sw-update-dismiss" aria-label="Dismiss">&times;</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/peerjs@1.5.3/dist/peerjs.min.js" crossorigin="anonymous" integrity="sha384-xdnban19OvEjxqUwdxLBK656dkvLsKDGt6EcvKK+6UT4lw6DPmeNaax7Y0CKhCDE" referrerpolicy="no-referrer"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous" referrerpolicy="no-referrer" integrity="sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" crossorigin="anonymous" integrity="sha384-b5Ya4Bq3qCyz39m2ISh+4DxjAIljdeFwK/BsXLuj9gugaNwAcj/ia15fxNZL9Nlx" referrerpolicy="no-referrer"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
