@@ -4,8 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
   <meta name="theme-color" id="theme-color" content="#06060e">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="description" content="Mangaud-Chatting — Zero-persistence, peer-to-peer encrypted messaging.">
   <meta name="keywords" content="encrypted chat, private messenger, p2p, ephemeral">
@@ -15,7 +13,7 @@
   <meta property="og:description" content="Zero-persistence, peer-to-peer encrypted messaging. Rooms self-destruct.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://mangaud-chatting.netlify.app">
-  <meta property="og:image" content="/assets/icon-512.png">
+  <meta property="og:image" content="https://mangaud-chatting.netlify.app/assets/icon-512.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="MANGAUD - Encrypted P2P Messenger">
   <meta name="twitter:description" content="Zero-persistence, peer-to-peer encrypted messaging.">
@@ -27,7 +25,11 @@
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/png" href="/assets/icon-192.png">
-  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-title" content="MANGAUD">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
   <title>MANGAUD - Encrypted P2P Messenger</title>
@@ -49,7 +51,10 @@
     <!-- Landing -->
     <div id="screen-landing" class="screen active" role="tabpanel" aria-label="Landing">
       <div class="landing-inner">
-        <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">&#x1F319;</button>
+        <div class="landing-top-btns">
+          <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">&#x1F319;</button>
+          <button class="btn-icon btn-help-open" id="btn-help-open" aria-label="Help" title="Help &amp; Guide">&#x2753;</button>
+        </div>
         <img src="/assets/logo.jpeg" alt="Mangaud-Chatting" class="brand-logo" width="96" height="96">
         <h1 class="app-title">MANGAUD</h1>
         <p class="tagline">Zero servers. Zero persistence.</p>
@@ -75,7 +80,7 @@
         <button class="theme-toggle btn-icon" id="theme-toggle-host" aria-label="Toggle theme">&#x1F319;</button>
       </header>
       <div class="code-section">
-        <div class="code-digits" id="host-code" aria-label="Room code" role="text">-&nbsp;-&nbsp;-&nbsp;-&nbsp;-&nbsp;-&nbsp;-&nbsp;-</div>
+        <div class="code-digits" id="host-code" aria-label="Room code" role="text">&mdash;&nbsp;&mdash;&nbsp;&mdash;&nbsp;&mdash;&nbsp;&mdash;&nbsp;&mdash;</div>
         <div class="qr-container" id="qr-host" aria-label="QR code"><div class="qr-placeholder pulse" style="width:160px;height:160px">Generating QR&hellip;</div></div>
         <p class="status-text" id="host-status"><span class="pulse-dot"></span>Waiting for a guest&hellip;</p>
       </div>
@@ -95,9 +100,9 @@
         <button class="theme-toggle btn-icon" id="theme-toggle-join" aria-label="Toggle theme">&#x1F319;</button>
       </header>
       <div class="code-section">
-        <div class="code-digits" id="join-code-display" aria-label="Entered code" role="text">&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;</div>
+        <div class="code-digits" id="join-code-display" aria-label="Entered code" role="text">&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;&nbsp;&ndash;</div>
         <div class="ciw">
-          <input type="text" id="join-code-input" placeholder="Enter 8-character code" maxlength="8" pattern="[0-9A-Z]{8}" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" inputmode="text" aria-label="Room code">
+          <input type="text" id="join-code-input" placeholder="Enter 6-character code" maxlength="6" pattern="[0-9A-Z]{6}" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" inputmode="text" aria-label="Room code">
         </div>
         <div>
           <button class="btn btn-primary" id="btn-join-submit" disabled>Join Room</button>
@@ -115,6 +120,18 @@
           <img src="/assets/logo.jpeg" alt="" class="prompt-logo" width="48" height="48">
           <h2 class="name-prompt-title" id="name-prompt-title">Enter your name</h2>
           <input type="text" id="name-input" class="name-input" placeholder="Your name..." maxlength="20" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Your name">
+          <div class="room-mode-select hidden" id="room-mode-select">
+            <label class="room-mode-option">
+              <input type="radio" name="room-mode" value="normal" checked>
+              <span class="room-mode-radio"></span>
+              <span class="room-mode-text">Normal - Everyone can send messages</span>
+            </label>
+            <label class="room-mode-option">
+              <input type="radio" name="room-mode" value="readonly">
+              <span class="room-mode-radio"></span>
+              <span class="room-mode-text">Read Only - Only host can send messages</span>
+            </label>
+          </div>
           <div class="name-prompt-actions">
             <button class="btn btn-primary" id="name-submit">Continue</button>
             <button class="btn btn-outline" id="name-cancel">Cancel</button>
@@ -141,6 +158,7 @@
             <button class="btn-icon btn-info" id="btn-sound-toggle" title="Toggle sound" aria-label="Toggle sound" data-sound="on">&#x1F50A;</button>
             <button class="theme-toggle btn-icon" id="theme-toggle-chat" aria-label="Toggle theme">&#x1F319;</button>
             <button class="btn-icon btn-danger" id="btn-destroy" title="Destroy room" aria-label="Destroy room">&times;</button>
+            <button class="btn-icon btn-danger hidden" id="btn-leave" title="Leave room" aria-label="Leave room">&#x2190;</button>
           </div>
         </div>
         <div class="chat-header-bottom">
@@ -153,6 +171,8 @@
       <button class="scroll-bottom-btn hidden" id="scroll-bottom-btn" aria-label="Scroll to bottom" title="New messages below">&#x2193;</button>
       <div id="typing-indicator-guest" class="typing-indicator" aria-live="polite" aria-atomic="true"></div>
       <div class="chat-input-area">
+        <input type="file" id="file-input" class="hidden" accept=".c,.cpp,.h,.hpp,.java,.py,.js,.ts,.rb,.go,.rs,.cs,.swift,.kt,.php,.pl,.sh,.bat,.sql,.html,.css,.scss,.less,.xml,.json,.yaml,.yml,.toml,.ini,.cfg,.conf,.md,.txt,.rtf,.log,.csv,.tsv,.env,.gitignore,.dockerfile,.makefile,.cmake,.gradle,.sbt,.csproj,.sln,.sbt,.r,.R,.lua,.dart,.ex,.exs,.erl,.hs,.ml,.fs,.vb,.bas,.cls,.frm,.vbs,.ps1,.psm1,.psd1,.au3,.ahk,.nim,.zig,.v,.sv,.vhd,.vhdl,.tcl,.rkt,.clj,.cljs,.cljc,.edn,.elm,.purs,.hs,.cabal,.nix,.tf,.hcl,.proto,.avsc,.avro,.thrift" multiple>
+        <button class="btn-icon btn-file" id="btn-file" aria-label="Send a file" title="Send a file">&#x1F4CE;</button>
         <textarea id="chat-input" rows="1" placeholder="Type a message&hellip;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Message input"></textarea>
         <button class="btn btn-primary btn-send" id="btn-send" aria-label="Send message">Send</button>
       </div>
@@ -181,30 +201,35 @@
         </div>
       </div>
     </div>
+  </div>
 
-    <!-- Users Panel -->
-    <div id="users-overlay" class="overlay hidden" role="dialog" aria-label="Connected Users">
-      <div class="users-panel">
-        <div class="users-header">
-          <h2 class="users-title">Connected Users</h2>
-          <button class="btn-icon" id="btn-users-close" aria-label="Close">&times;</button>
-        </div>
-        <div class="users-body" id="users-list">
-          <div class="users-empty">No users connected</div>
-        </div>
+  <!-- Users Panel Overlay (outside #app for fixed positioning) -->
+  <div id="users-overlay" class="overlay hidden" role="dialog" aria-label="Connected Users">
+    <div class="users-panel">
+      <div class="users-header">
+        <h2 class="users-title">Connected Users</h2>
+        <button class="btn-icon" id="btn-users-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="users-body" id="users-list">
+        <div class="users-empty">No users connected</div>
       </div>
     </div>
   </div>
 
   <!-- Scanner Overlay -->
-  <div id="scanner-overlay" class="overlay hidden" role="dialog" aria-label="QR Code Scanner">
-    <div class="scanner-container">
-      <video id="scanner-video" autoplay playsinline muted aria-hidden="true"></video>
-      <canvas id="scanner-canvas" hidden aria-hidden="true"></canvas>
-      <div class="scanner-frame" aria-hidden="true"></div>
-      <p class="scanner-hint">Align QR code within the frame</p>
-      <button class="btn btn-outline" id="btn-scanner-close" aria-label="Close scanner">Cancel</button>
+  <div id="scanner-overlay" class="scanner-overlay hidden" role="dialog" aria-label="QR Code Scanner">
+    <video id="scanner-video" autoplay playsinline muted aria-hidden="true"></video>
+      <canvas id="scanner-canvas" aria-hidden="true" style="position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none"></canvas>
+    <div class="scanner-vignette" aria-hidden="true"></div>
+    <div class="scanner-frame" aria-hidden="true">
+      <div class="scanner-line" aria-hidden="true"></div>
+      <span class="corner corner-tl"></span>
+      <span class="corner corner-tr"></span>
+      <span class="corner corner-bl"></span>
+      <span class="corner corner-br"></span>
     </div>
+    <p class="scanner-hint">Align QR code within the frame</p>
+    <button class="btn btn-outline scanner-close-btn" id="btn-scanner-close" aria-label="Close scanner">Cancel</button>
   </div>
 
   <div id="toast" class="toast hidden" role="alert" aria-live="assertive"></div>
@@ -235,6 +260,244 @@
       </div>
     </div>
   </div>
+
+  <!-- Confirm modal (outside #app for fixed positioning) -->
+  <div id="confirm-modal" class="confirm-overlay hidden" role="dialog" aria-modal="true" aria-label="Confirm">
+    <div class="confirm-box">
+      <p id="confirm-msg" class="confirm-msg"></p>
+      <div class="confirm-actions">
+        <button id="confirm-ok" class="btn btn-primary">Confirm</button>
+        <button id="confirm-cancel" class="btn btn-outline">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Help Panel (outside #app for fixed positioning) -->
+  <div id="help-panel" class="help-panel" role="dialog" aria-label="Help & Guide">
+    <div class="help-header">
+      <h2 class="help-title">Help &amp; Guide</h2>
+      <button class="btn-icon help-close" id="btn-help-close" aria-label="Close help">&times;</button>
+    </div>
+    <div class="help-search">
+      <input type="text" id="help-search-input" placeholder="Search features, FAQ..." autocomplete="off" aria-label="Search help">
+    </div>
+    <div class="help-body" id="help-body">
+
+      <!-- Quick Start -->
+      <section class="help-section" data-search="quick start getting started how to use first time">
+        <h3 class="help-section-title">&#x1F680; Quick Start</h3>
+        <div class="help-steps">
+          <div class="help-step">
+            <span class="step-num">1</span>
+            <div class="step-content">
+              <strong>Host a Room</strong>
+              <p>Tap <em>Host a Room</em> on the landing page. Enter your name. You'll get a <strong>6-digit room code</strong> and a QR code.</p>
+            </div>
+          </div>
+          <div class="help-step">
+            <span class="step-num">2</span>
+            <div class="step-content">
+              <strong>Share the Code</strong>
+              <p>Send the code or QR image to your friend. They can join by typing the code, scanning the QR, or using the Scan button.</p>
+            </div>
+          </div>
+          <div class="help-step">
+            <span class="step-num">3</span>
+            <div class="step-content">
+              <strong>Start Chatting</strong>
+              <p>Messages are <strong>end-to-end encrypted</strong> and exist only in RAM. Close the tab and everything vanishes.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Features -->
+      <section class="help-section" data-search="features what can it do capabilities">
+        <h3 class="help-section-title">&#x2728; Features</h3>
+        <div class="help-feature-grid">
+          <div class="help-feature" data-search="encryption e2e aes secure private">
+            <span class="hf-icon">&#x1F512;</span>
+            <div><strong>E2E Encryption</strong><br><span>AES-256-GCM. Only you and your peer can read messages.</span></div>
+          </div>
+          <div class="help-feature" data-search="no server zero backend p2p peer to peer">
+            <span class="hf-icon">&#x1F310;</span>
+            <div><strong>Zero Servers</strong><br><span>P2P via WebRTC. No data touches any server.</span></div>
+          </div>
+          <div class="help-feature" data-search="no storage ram only privacy ephemeral">
+            <span class="hf-icon">&#x1F4A5;</span>
+            <div><strong>RAM Only</strong><br><span>No localStorage, cookies, or databases. Close = gone.</span></div>
+          </div>
+          <div class="help-feature" data-search="file share send code programming languages download">
+            <span class="hf-icon">&#x1F4CE;</span>
+            <div><strong>File Sharing</strong><br><span>Send .py, .js, .java, .c, .cpp and 50+ formats. Direct download.</span></div>
+          </div>
+          <div class="help-feature" data-search="qr code scan camera">
+            <span class="hf-icon">&#x1F4F7;</span>
+            <div><strong>QR Code Join</strong><br><span>Scan a QR code to join instantly. No typing needed.</span></div>
+          </div>
+          <div class="help-feature" data-search="multi guest unlimited people group chat">
+            <span class="hf-icon">&#x1F465;</span>
+            <div><strong>Multi-Guest</strong><br><span>Unlimited guests per room. Group chat with anyone.</span></div>
+          </div>
+          <div class="help-feature" data-search="host transfer admin change ownership">
+            <span class="hf-icon">&#x1F451;</span>
+            <div><strong>Host Transfer</strong><br><span>Pass host role to any guest. Room keeps running.</span></div>
+          </div>
+          <div class="help-feature" data-search="read only mode readonly permission control">
+            <span class="hf-icon">&#x1F512;</span>
+            <div><strong>Room Modes</strong><br><span>Normal or Read-only. Host controls who can send.</span></div>
+          </div>
+          <div class="help-feature" data-search="block ip ban kick remove user">
+            <span class="hf-icon">&#x1F6AB;</span>
+            <div><strong>Block Users</strong><br><span>Block any user's IP so they can't rejoin.</span></div>
+          </div>
+          <div class="help-feature" data-search="dark light theme toggle mode">
+            <span class="hf-icon">&#x1F319;</span>
+            <div><strong>Dark / Light Mode</strong><br><span>Toggle themes. Defaults to your OS preference.</span></div>
+          </div>
+          <div class="help-feature" data-search="pwa install mobile app progressive web">
+            <span class="hf-icon">&#x1F4F1;</span>
+            <div><strong>PWA Install</strong><br><span>Install as an app on your phone or desktop.</span></div>
+          </div>
+          <div class="help-feature" data-search="typing indicator who is typing">
+            <span class="hf-icon">&#x270D;</span>
+            <div><strong>Typing Indicator</strong><br><span>See when the other person is typing.</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- How It Works -->
+      <section class="help-section" data-search="how it works architecture encryption key exchange webrtc">
+        <h3 class="help-section-title">&#x2699;&#xFE0F; How It Works</h3>
+        <div class="help-how">
+          <div class="help-how-item">
+            <strong>Connection</strong>
+            <p>Uses <strong>PeerJS</strong> (WebRTC) to establish a direct peer-to-peer connection. The only server involved is the signaling server, which merely helps peers find each other &mdash; it never sees your messages.</p>
+          </div>
+          <div class="help-how-item">
+            <strong>Encryption</strong>
+            <p>When a guest joins, the host generates an <strong>AES-256-GCM</strong> key and sends it over the encrypted channel. All subsequent messages are encrypted with this key. Even if someone intercepted the WebRTC traffic, they couldn't read it.</p>
+          </div>
+          <div class="help-how-item">
+            <strong>Room Codes</strong>
+            <p>6-character codes (A-Z, 0-9) generated using <strong>crypto.getRandomValues()</strong> &mdash; cryptographically secure. 2.1 billion possible combinations.</p>
+          </div>
+          <div class="help-how-item">
+            <strong>Persistence</strong>
+            <p><strong>None.</strong> Everything lives in RAM. No localStorage, no IndexedDB, no cookies, no server logs. Close the tab and the room is destroyed. The host disconnecting destroys the room for everyone.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ -->
+      <section class="help-section" data-search="faq questions answers help trouble">
+        <h3 class="help-section-title">&#x2753; FAQ</h3>
+        <div class="help-faq">
+          <details class="faq-item" data-search="is it really private secure safe encrypted">
+            <summary>Is my chat really private?</summary>
+            <p>Yes. Messages are <strong>end-to-end encrypted</strong> with AES-256-GCM. They travel directly between peers via WebRTC. No server ever sees your content. When you close the tab, everything is gone &mdash; no logs, no traces.</p>
+          </details>
+          <details class="faq-item" data-search="how many people can join group limit">
+            <summary>How many people can join a room?</summary>
+            <p>There's <strong>no limit</strong>. The host can have as many guests as their bandwidth allows. Each guest connects directly to the host via WebRTC.</p>
+          </details>
+          <details class="faq-item" data-search="file size limit max upload send file">
+            <summary>What's the file size limit?</summary>
+            <p>Files are sent as base64-encoded text messages. Practical limit is about <strong>3-4 MB</strong> (which becomes ~4-5 MB after encoding). For code files, this is usually more than enough.</p>
+          </details>
+          <details class="faq-item" data-search="which file types supported formats extensions">
+            <summary>Which file types can I send?</summary>
+            <p>Any file! We support <strong>50+ programming language extensions</strong> including .c, .cpp, .java, .py, .js, .ts, .go, .rs, .rb, .swift, .kt, and many more. You can also send .txt, .md, .json, .csv, and any other file.</p>
+          </details>
+          <details class="faq-item" data-search="what if host leaves disconnects">
+            <summary>What happens if the host leaves?</summary>
+            <p>The room is <strong>destroyed</strong>. All guests are disconnected. Nothing is saved. If the host temporarily loses connection, they can reconnect and guests will follow.</p>
+          </details>
+          <details class="faq-item" data-search="mobile android ios phone work">
+            <summary>Does it work on mobile?</summary>
+            <p>Yes! MANGAUD is a <strong>PWA</strong> (Progressive Web App). It works on any device with a modern browser &mdash; Android, iOS, Windows, macOS, Linux. You can install it as an app from your browser.</p>
+          </details>
+          <details class="faq-item" data-search="slow laggy performance speed connection">
+            <summary>Why is it slow / laggy?</summary>
+            <p>MANGAUD uses P2P, so speed depends on your <strong>internet connection</strong> and distance to the other peer. If WebRTC fails (firewalls, NAT), the connection may fall back to a relay, which is slower. Try again or check your network.</p>
+          </details>
+          <details class="faq-item" data-search="block ban remove kick someone user">
+            <summary>Can I block someone?</summary>
+            <p>Yes. The host can <strong>block any user's IP</strong> from the Users panel. Blocked users are immediately kicked and cannot rejoin the room.</p>
+          </details>
+          <details class="faq-item" data-search="read only mode permission control send messages">
+            <summary>What is Read-Only mode?</summary>
+            <p>Read-only mode means <strong>only the host can send messages</strong>. The host can selectively grant send permission to specific guests. Useful for presentations or announcements.</p>
+          </details>
+          <details class="faq-item" data-search="host transfer pass admin ownership change">
+            <summary>Can I transfer host role?</summary>
+            <p>Yes. The host can make any guest the new host from the Users panel. The old host becomes a regular guest. The room continues without interruption.</p>
+          </details>
+        </div>
+      </section>
+
+      <!-- Keyboard Shortcuts -->
+      <section class="help-section" data-search="keyboard shortcuts hotkeys keybinds">
+        <h3 class="help-section-title">&#x2328;&#xFE0F; Keyboard Shortcuts</h3>
+        <div class="help-shortcuts">
+          <div class="shortcut-row"><kbd>Enter</kbd><span>Send message / Submit code</span></div>
+          <div class="shortcut-row"><kbd>Shift + Enter</kbd><span>New line in message</span></div>
+          <div class="shortcut-row"><kbd>F5</kbd><span>Blocked in room (prevents accidental refresh)</span></div>
+          <div class="shortcut-row"><kbd>Ctrl + R</kbd><span>Blocked in room (prevents accidental refresh)</span></div>
+        </div>
+      </section>
+
+      <!-- Host Controls -->
+      <section class="help-section" data-search="host controls panel manage users admin">
+        <h3 class="help-section-title">&#x1F39B;&#xFE0F; Host Controls</h3>
+        <div class="help-how">
+          <div class="help-how-item">
+            <strong>Users Panel</strong>
+            <p>Tap the <strong>users icon</strong> in the chat header to open the panel. See all connected users with their name, IP, join time, and message count.</p>
+          </div>
+          <div class="help-how-item">
+            <strong>Room Mode Toggle</strong>
+            <p>Switch between <strong>Normal</strong> (everyone can send) and <strong>Read-only</strong> (only host sends) from the Users panel.</p>
+          </div>
+          <div class="help-how-item">
+            <strong>Allow Send</strong>
+            <p>In Read-only mode, tap <strong>Allow Send</strong> next to a user to grant them send permission.</p>
+          </div>
+          <div class="help-how-item">
+            <strong>Make Host</strong>
+            <p>Transfer host role to any user. You'll become a regular guest. The room continues with the new host.</p>
+          </div>
+          <div class="help-how-item">
+            <strong>Block User</strong>
+            <p>Block a user's IP to kick them and prevent rejoining. Use this for unwanted guests.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- About -->
+      <section class="help-section" data-search="about version credits github author">
+        <h3 class="help-section-title">&#x1F4D6; About</h3>
+        <div class="help-about">
+          <div class="help-about-item">
+            <strong>MANGAUD</strong> v2.0.0
+          </div>
+          <div class="help-about-item">
+            <p>Zero-persistence, P2P encrypted messenger. Built with WebRTC, Web Crypto API, and a lot of &#x2764;&#xFE0F;.</p>
+          </div>
+          <div class="help-about-links">
+            <a href="https://github.com/mangalam-gaud" target="_blank" rel="noopener noreferrer" class="btn btn-outline help-gh-btn">
+              &#x1F4BB; View on GitHub
+            </a>
+          </div>
+          <div class="help-about-item help-about-credit">
+            Made by <a href="https://github.com/mangalam-gaud" target="_blank" rel="noopener noreferrer">MANGAUD</a>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+  <div class="help-overlay hidden" id="help-overlay"></div>
 
   <script src="https://unpkg.com/peerjs@1.5.3/dist/peerjs.min.js" crossorigin="anonymous" integrity="sha384-xdnban19OvEjxqUwdxLBK656dkvLsKDGt6EcvKK+6UT4lw6DPmeNaax7Y0CKhCDE" referrerpolicy="no-referrer"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous" referrerpolicy="no-referrer" integrity="sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU"></script>

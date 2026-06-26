@@ -14,6 +14,7 @@
     destroyed: false,
     connected: false,
     connecting: false,
+    leaving: false,
     guestCount: 0,
 
     /* ---- E2E Encryption ---- */
@@ -48,8 +49,13 @@
     maxMessages: 200,
     msgElements: [],
 
+    /* ---- Message history for host transfer ---- */
+    msgHistory: [],
+    _replayingHistory: false,
+
     /* ---- Heartbeat ---- */
     heartbeatId: null,
+    lastHeartbeatAck: 0,
 
     /* ---- PWA Install ---- */
     deferredPrompt: null,
@@ -68,10 +74,31 @@
 
     /* ---- Users tracking (host side) ---- */
     users: [],
+    blockedIPs: [],
+    allowedSenders: [],
+
+    /* ---- Guest-side user list ---- */
+    guestUsers: [],
+    hostName: '',
+    senderAllowed: false,
+
+    /* ---- Room mode ---- */
+    roomMode: 'normal',
 
     /* ---- Sound ---- */
     soundEnabled: true,
     audioCtx: null,
+
+    /* ---- Scanner ---- */
+    cameraStream: null,
+    scannerActive: false,
+    animFrameId: null,
+
+    /* ---- Toast ---- */
+    toastTimeout: null,
+
+    /* ---- Users panel refresh ---- */
+    _usersRefreshInt: null,
 
     /* ---- Theme ---- */
     theme: 'dark',
@@ -89,6 +116,21 @@
      ========================================================================== */
   const $ = (s) => document.querySelector(s);
   const D = {};
+
+  function safeCopy(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    /* Fallback for HTTP / non-secure contexts */
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (_) {}
+    document.body.removeChild(ta);
+    return Promise.resolve();
+  }
 
   function cacheDom() {
     D.landing       = $('#screen-landing');
@@ -109,6 +151,7 @@
     D.input         = $('#chat-input');
     D.btnSend       = $('#btn-send');
     D.btnDestroy    = $('#btn-destroy');
+    D.btnLeave      = $('#btn-leave');
     D.scanOverlay   = $('#scanner-overlay');
     D.scanVideo     = $('#scanner-video');
     D.scanCanvas    = $('#scanner-canvas');
@@ -135,6 +178,7 @@
     D.nameTitle       = $('#name-prompt-title');
     D.nameSubmit      = $('#name-submit');
     D.nameCancel      = $('#name-cancel');
+    D.roomModeSelect  = $('#room-mode-select');
     D.btnUsersPanel   = $('#btn-users-panel');
     D.usersOverlay    = $('#users-overlay');
     D.usersList       = $('#users-list');
@@ -144,12 +188,38 @@
   /* ==========================================================================
      TOAST
      ========================================================================== */
-  function toast(msg, type) {
+  function toast(msg, type, duration) {
     clearTimeout(S.toastTimeout);
     D.toast.textContent = msg;
     D.toast.className = 'toast' + (type ? ' ' + type : '');
     D.toast.classList.remove('hidden');
-    S.toastTimeout = setTimeout(function () { D.toast.classList.add('hidden'); }, 3500);
+    S.toastTimeout = setTimeout(function () { D.toast.classList.add('hidden'); }, duration || 3500);
+  }
+
+  /* ---- Custom confirm modal ---- */
+  function showConfirm(msg) {
+    return new Promise(function (resolve) {
+      var overlay = document.getElementById('confirm-modal');
+      var msgEl = document.getElementById('confirm-msg');
+      var okBtn = document.getElementById('confirm-ok');
+      var cancelBtn = document.getElementById('confirm-cancel');
+      if (!overlay || !msgEl || !okBtn || !cancelBtn) { resolve(false); return; }
+      msgEl.textContent = msg;
+      overlay.classList.remove('hidden');
+      function cleanup(val) {
+        overlay.classList.add('hidden');
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        overlay.removeEventListener('click', onBg);
+        resolve(val);
+      }
+      function onOk() { cleanup(true); }
+      function onCancel() { cleanup(false); }
+      function onBg(e) { if (e.target === overlay) cleanup(false); }
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      overlay.addEventListener('click', onBg);
+    });
   }
 
   /* ==========================================================================
@@ -207,9 +277,14 @@
   async function startScanner() {
     if (S.scannerActive) return;
     try {
-      var stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: 640, height: 640 },
-      });
+      var stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        });
+      } catch (_) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
       S.cameraStream = stream;
       S.scannerActive = true;
       D.scanVideo.srcObject = stream;
@@ -217,29 +292,38 @@
       await D.scanVideo.play();
       scanLoop();
     } catch (_) {
+      stopCamera();
+      D.scanOverlay.classList.add('hidden');
       toast('Camera unavailable. Enter the code manually.', 'error');
     }
   }
 
   function scanLoop() {
     if (!S.scannerActive) return;
-    if (D.scanVideo.readyState < 2) {
+    if (typeof jsQR === 'undefined') { stopCamera(); D.scanOverlay.classList.add('hidden'); toast('QR library failed to load. Enter code manually.', 'error'); return; }
+    if (D.scanVideo.readyState < 2 || !D.scanVideo.videoWidth) {
       S.animFrameId = requestAnimationFrame(scanLoop);
       return;
     }
     var v = D.scanVideo;
     var c = D.scanCanvas;
-    c.width = v.videoWidth;
-    c.height = v.videoHeight;
-    var ctx = c.getContext('2d');
-    ctx.drawImage(v, 0, 0);
-    var img = ctx.getImageData(0, 0, c.width, c.height);
+    if (c.width !== v.videoWidth || c.height !== v.videoHeight) {
+      c.width = v.videoWidth;
+      c.height = v.videoHeight;
+    }
+    var ctx;
+    try { ctx = c.getContext('2d', { willReadFrequently: true }); } catch (_) {}
+    if (!ctx) { try { ctx = c.getContext('2d'); } catch (_) {} }
+    if (!ctx) { S.animFrameId = requestAnimationFrame(scanLoop); return; }
+    try { ctx.drawImage(v, 0, 0, c.width, c.height); } catch (_) { S.animFrameId = requestAnimationFrame(scanLoop); return; }
+    var img;
+    try { img = ctx.getImageData(0, 0, c.width, c.height); } catch (_) { S.animFrameId = requestAnimationFrame(scanLoop); return; }
     try {
-      var found = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
-      if (found && /^[0-9A-Z]{8}$/.test(found.data)) {
+      var found = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
+      if (found && /^[0-9A-Z]{6}$/.test(found.data)) {
         stopCamera();
         D.scanOverlay.classList.add('hidden');
-        joinWithCode(found.data);
+        showNamePrompt('join', found.data);
         return;
       }
     } catch (_) {}
@@ -248,45 +332,23 @@
 
 
   /* ==========================================================================
-     JOIN CODE INPUT — Text input for 8-char alphanumeric code
+     JOIN CODE INPUT — Text input for 6-char alphanumeric code
      ========================================================================== */
-  function renderCodePyramid(code, el) {
+  function renderCode(code, el) {
     el.textContent = '';
     if (!code) {
-      var empty = document.createElement('div');
-      empty.style.cssText = 'text-align:center;letter-spacing:0.15em;opacity:0.2;font-family:var(--mono);font-size:1.6rem;line-height:1.6';
-      empty.textContent = '\u2014 \u2014 \u2014 \u2014 \u2014 \u2014 \u2014 \u2014';
-      el.appendChild(empty);
+      el.textContent = '\u2014\u2014\u2014\u2014\u2014\u2014';
       return;
     }
-    var chars = code.split('');
-    var rows = [
-      [chars[0]],
-      [chars[1], chars[2]],
-      [chars[3], chars[4], chars[5]],
-      [chars[6], chars[7]],
-    ];
-    var container = document.createElement('div');
-    container.className = 'code-pyramid';
-    rows.forEach(function (row) {
-      var rowEl = document.createElement('div');
-      rowEl.className = 'pyramid-row';
-      row.forEach(function (ch) {
-        var span = document.createElement('span');
-        span.className = 'pyramid-char' + (ch && ch !== ' ' ? ' filled' : '');
-        span.textContent = ch || '\u00A0';
-        rowEl.appendChild(span);
-      });
-      container.appendChild(rowEl);
-    });
-    el.appendChild(container);
+    var spaced = code.split('').join(' ');
+    el.textContent = spaced;
   }
 
   function updateJoinDisp() {
     var val = D.joinCodeInput.value.toUpperCase().replace(/[^0-9A-Z]/g, '');
     D.joinCodeInput.value = val;
-    renderCodePyramid(val.padEnd(8, ' '), D.joinCodeDisp);
-    D.btnJoinSubmit.disabled = val.length !== 8;
+    renderCode(val, D.joinCodeDisp);
+    D.btnJoinSubmit.disabled = val.length !== 6;
   }
 
   function onJoinCodeInput() {
@@ -337,6 +399,40 @@
   }
 
   /* ==========================================================================
+     HEARTBEAT — Detects dead connections via periodic ping/pong
+     ========================================================================== */
+  function initHeartbeat() {
+    if (S.heartbeatId) { clearInterval(S.heartbeatId); }
+    S.lastHeartbeatAck = Date.now();
+    var HEARTBEAT_INTERVAL = 15000; /* 15s between pings */
+    var HEARTBEAT_TIMEOUT = 45000;  /* 45s without ack = dead connection */
+    S.heartbeatId = setInterval(function () {
+      if (S.destroyed) { clearInterval(S.heartbeatId); S.heartbeatId = null; return; }
+      var now = Date.now();
+      /* Check if we haven't received an ack in too long */
+      if (S.lastHeartbeatAck && (now - S.lastHeartbeatAck > HEARTBEAT_TIMEOUT)) {
+        clearInterval(S.heartbeatId);
+        S.heartbeatId = null;
+        if (S.role === 'host') {
+          toast('Connection lost. Guests may have disconnected.', 'error');
+          destroy('heartbeat-timeout');
+        } else {
+          toast('Connection to host lost. Reconnecting\u2026', 'error');
+          startReconnect();
+        }
+        return;
+      }
+      /* Send heartbeat to all peers */
+      var payload = { type: 'heartbeat', ts: now };
+      if (S.role === 'host') {
+        S.conns.forEach(function (c) { try { c.send(payload); } catch (_) {} });
+      } else if (S.conn) {
+        try { S.conn.send(payload); } catch (_) {}
+      }
+    }, HEARTBEAT_INTERVAL);
+  }
+
+  /* ==========================================================================
      E2E ENCRYPTION — AES-GCM via Web Crypto API
      ========================================================================== */
   async function generateEncryptionKey() {
@@ -346,11 +442,6 @@
       ['encrypt', 'decrypt']
     );
     return key;
-  }
-
-  async function exportKey(key) {
-    var raw = await crypto.subtle.exportKey('raw', key);
-    return new Uint8Array(raw);
   }
 
   async function exportKeyBase64(key) {
@@ -401,6 +492,66 @@
       data
     );
     return new TextDecoder().decode(decrypted);
+  }
+
+  /* ==========================================================================
+     HOST TRANSFER — Chunked history transfer
+     ========================================================================== */
+  function chunkHistory(history, maxBytes) {
+    maxBytes = maxBytes || 55000;
+    if (!history || history.length === 0) return [];
+    var str = JSON.stringify(history);
+    if (str.length <= maxBytes) return [history];
+    var chunks = [];
+    var arr = history.slice();
+    while (arr.length > 0) {
+      var chunk = [];
+      var size = 2;
+      for (var i = 0; i < arr.length; i++) {
+        var itemSize = JSON.stringify(arr[i]).length + 1;
+        if (size + itemSize > maxBytes && chunk.length > 0) break;
+        chunk.push(arr[i]);
+        size += itemSize;
+      }
+      chunks.push(chunk);
+      arr = arr.slice(chunk.length);
+    }
+    return chunks;
+  }
+
+  function sendChunkedHistory(conn, history, type) {
+    if (!history || history.length === 0) return;
+    var chunks = chunkHistory(history);
+    chunks.forEach(function (chunk, idx) {
+      try {
+        conn.send({ type: type, messages: chunk, chunkIndex: idx, totalChunks: chunks.length });
+      } catch (_) {}
+    });
+  }
+
+  function replayHistory(messages) {
+    D.msgs.textContent = '';
+    S.msgElements = [];
+    S.lastMsgDate = null;
+    if (!messages || messages.length === 0) {
+      var emptyMsg = document.createElement('div');
+      emptyMsg.className = 'chat-empty';
+      emptyMsg.textContent = 'Chat history';
+      D.msgs.appendChild(emptyMsg);
+      return;
+    }
+    /* Skip history tracking during replay to avoid doubling */
+    S._replayingHistory = true;
+    messages.forEach(function (msg) {
+      renderDateSeparator(msg.ts);
+      if (msg.type === 'chat') {
+        addMsg(msg.text, msg.isMine, msg.ts, null, '', msg.sender);
+      } else if (msg.type === 'file') {
+        addFileMsg(msg.name, msg.size, msg.data, msg.isMine, msg.ts, null, '', msg.sender);
+      }
+    });
+    S._replayingHistory = false;
+    if (!S.userScrolledUp) D.msgs.scrollTop = D.msgs.scrollHeight;
   }
 
   /* ==========================================================================
@@ -468,6 +619,12 @@
     D.msgs.appendChild(el);
     S.msgElements.push(el);
 
+    /* Track history for host transfer (skip during replay) */
+    if (!S._replayingHistory) {
+      var historySender = fromName || (isMine ? S.myName : S.peerName) || 'Unknown';
+      S.msgHistory.push({ type: 'chat', text: text, ts: ts || Date.now(), sender: historySender });
+    }
+
     /* Enforce message limit */
     while (S.msgElements.length > S.maxMessages) {
       var oldest = S.msgElements.shift();
@@ -499,9 +656,10 @@
   /* ==========================================================================
      TYPING INDICATOR
      ========================================================================== */
-  function showTyping(role) {
+  function showTyping(role, name) {
     var el = role === 'guest' ? D.typingGuest : D.typingHost;
-    el.textContent = role === 'guest' ? 'Guest is typing\u2026' : 'You are typing\u2026';
+    var who = role === 'guest' ? (name || 'Someone') : 'You';
+    el.textContent = who + ' is typing\u2026';
     el.classList.add('visible');
     S.peerTyping = true;
   }
@@ -514,24 +672,25 @@
   }
 
   function onLocalInput() {
-    if (!S.connected || S.destroyed) return;
-    if (S.role !== 'host' && !S.conn) return;
+    if (S.destroyed) return;
+    if (S.role !== 'host' && (!S.connected || !S.conn)) return;
+    if (S.role === 'host' && S.conns.length === 0) return;
     clearTimeout(S.typingThrottle);
     if (!S.localTyping) {
       S.localTyping = true;
       if (S.role === 'host') {
-        S.conns.forEach(function (c) { try { c.send({ type: 'typing' }); } catch (_) {} });
+        S.conns.forEach(function (c) { try { c.send({ type: 'typing', name: S.myName }); } catch (_) {} });
       } else {
-        try { S.conn.send({ type: 'typing' }); } catch (_) {}
+        try { S.conn.send({ type: 'typing', name: S.myName }); } catch (_) {}
       }
     }
     S.typingThrottle = setTimeout(function () {
       S.localTyping = false;
       if (S.connected) {
         if (S.role === 'host') {
-          S.conns.forEach(function (c) { try { c.send({ type: 'stopped-typing' }); } catch (_) {} });
+          S.conns.forEach(function (c) { try { c.send({ type: 'stopped-typing', name: S.myName }); } catch (_) {} });
         } else if (S.conn) {
-          try { S.conn.send({ type: 'stopped-typing' }); } catch (_) {}
+          try { S.conn.send({ type: 'stopped-typing', name: S.myName }); } catch (_) {}
         }
       }
     }, 1200);
@@ -542,9 +701,15 @@
      ========================================================================== */
   async function sendMsg() {
     var text = D.input.value.trim();
-    if (!text || !S.connected || S.destroyed) return;
-    if (S.role !== 'host' && !S.conn) return;
+    if (!text || S.destroyed) return;
+    if (S.role === 'host') {
+      if (S.conns.length === 0) { toast('Waiting for a guest to connect\u2026', 'error'); return; }
+    } else {
+      if (!S.connected || !S.conn) { toast('Not connected to host', 'error'); return; }
+    }
+    if (S.role !== 'host' && S.roomMode === 'readonly' && !S.senderAllowed) { toast('Room is in read-only mode', 'error'); return; }
     if (!checkRateLimit()) { toast('Slow down!', 'error'); return; }
+    if (text.length > 50000) { text = text.substring(0, 50000); toast('Message truncated to 50,000 characters', ''); }
 
     var msgId = 'm' + (++S.msgCounter) + '_' + Date.now();
     var timestamp = Date.now();
@@ -584,6 +749,191 @@
 
 
   /* ==========================================================================
+     FILE SHARING — Send/receive files as base64 messages
+     ========================================================================== */
+  var MIME_MAP = {
+    '.c': 'text/x-c', '.cpp': 'text/x-c++', '.h': 'text/x-c', '.hpp': 'text/x-c++',
+    '.java': 'text/x-java', '.py': 'text/x-python', '.js': 'text/javascript',
+    '.ts': 'text/typescript', '.rb': 'text/x-ruby', '.go': 'text/x-go',
+    '.rs': 'text/x-rust', '.cs': 'text/x-csharp', '.swift': 'text/x-swift',
+    '.kt': 'text/x-kotlin', '.php': 'text/x-php', '.pl': 'text/x-perl',
+    '.sh': 'text/x-shellscript', '.bat': 'text/x-bat', '.sql': 'text/x-sql',
+    '.html': 'text/html', '.css': 'text/css', '.scss': 'text/x-scss',
+    '.xml': 'text/xml', '.json': 'application/json', '.yaml': 'text/yaml',
+    '.yml': 'text/yaml', '.toml': 'text/plain', '.ini': 'text/plain',
+    '.md': 'text/markdown', '.txt': 'text/plain', '.log': 'text/plain',
+    '.csv': 'text/csv', '.env': 'text/plain', '.r': 'text/x-r',
+    '.lua': 'text/x-lua', '.dart': 'text/x-dart', '.nim': 'text/x-nim',
+    '.zig': 'text/x-zig', '.v': 'text/x-verilog', '.tcl': 'text/x-tcl',
+    '.clj': 'text/x-clojure', '.elm': 'text/x-elm', '.nix': 'text/x-nix',
+    '.tf': 'text/x-hcl', '.proto': 'text/x-protobuf'
+  };
+
+  function getMime(filename) {
+    var ext = '.' + filename.split('.').pop().toLowerCase();
+    return MIME_MAP[ext] || 'application/octet-stream';
+  }
+
+  function sendFile(file) {
+    if (!file || S.destroyed) return;
+    if (S.role === 'host') {
+      if (S.conns.length === 0) { toast('Waiting for a guest to connect\u2026', 'error'); return; }
+    } else {
+      if (!S.connected || !S.conn) { toast('Not connected to host', 'error'); return; }
+    }
+    if (S.role !== 'host' && S.roomMode === 'readonly' && !S.senderAllowed) { toast('Room is in read-only mode', 'error'); return; }
+    if (!checkRateLimit()) { toast('Slow down!', 'error'); return; }
+
+    var reader = new FileReader();
+    reader.onload = function () {
+      var base64 = reader.result.split(',')[1];
+      if (!base64) { toast('Failed to read file', 'error'); return; }
+      if (base64.length > 5000000) { toast('File too large (max ~3.7MB encoded)', 'error'); return; }
+
+      var msgId = 'f' + (++S.msgCounter) + '_' + Date.now();
+      var timestamp = Date.now();
+      var payload = {
+        type: 'file',
+        name: file.name,
+        mime: getMime(file.name),
+        size: file.size,
+        data: base64,
+        timestamp: timestamp,
+        id: msgId,
+        sender: S.myName || 'Anonymous'
+      };
+
+      if (S.role === 'host') {
+        S.conns.forEach(function (c) { try { c.send(payload); } catch (_) {} });
+      } else {
+        try { S.conn.send(payload); } catch (_) { toast('Failed to send', 'error'); return; }
+      }
+
+      haptic(20);
+      renderDateSeparator(timestamp);
+      addFileMsg(file.name, file.size, base64, true, timestamp, msgId, 'sent');
+      onActivity();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function addFileMsg(name, size, base64, isMine, ts, msgId, deliveryStatus, fromName) {
+    var empty = D.msgs.querySelector('.chat-empty');
+    if (empty) empty.remove();
+
+    var w = document.createElement('div');
+    w.className = 'msg ' + (isMine ? 'sent' : 'received') + ' msg-file';
+    w.dataset.msgId = msgId || '';
+
+    var senderName = '';
+    if (isMine) {
+      senderName = S.myName || '';
+      if (senderName && S.role === 'host') senderName += ' (Host)';
+    } else {
+      senderName = fromName || S.peerName || '';
+    }
+    if (senderName) {
+      var nameEl = document.createElement('span');
+      nameEl.className = 'msg-sender';
+      nameEl.textContent = senderName;
+      w.appendChild(nameEl);
+    }
+
+    var card = document.createElement('div');
+    card.className = 'file-card';
+
+    var top = document.createElement('div');
+    top.className = 'file-top';
+
+    var icon = document.createElement('span');
+    icon.className = 'file-icon';
+    icon.textContent = '\uD83D\uDCC4';
+    top.appendChild(icon);
+
+    var info = document.createElement('div');
+    info.className = 'file-info';
+
+    var fname = document.createElement('span');
+    fname.className = 'file-name';
+    fname.textContent = name;
+    info.appendChild(fname);
+
+    var fsize = document.createElement('span');
+    fsize.className = 'file-size';
+    fsize.textContent = size > 1048576
+      ? (size / 1048576).toFixed(1) + ' MB'
+      : size > 1024
+        ? (size / 1024).toFixed(1) + ' KB'
+        : size + ' B';
+    info.appendChild(fsize);
+
+    top.appendChild(info);
+    card.appendChild(top);
+
+    var dlBtn = document.createElement('button');
+    dlBtn.className = 'btn btn-primary file-dl-btn';
+    dlBtn.textContent = 'Download';
+    dlBtn.setAttribute('aria-label', 'Download ' + name);
+    dlBtn.type = 'button';
+    dlBtn.addEventListener('click', function () {
+      var mime = getMime(name);
+      var byteStr = atob(base64);
+      var ab = new ArrayBuffer(byteStr.length);
+      var ia = new Uint8Array(ab);
+      for (var i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
+      var blob = new Blob([ab], { type: mime });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+    });
+    card.appendChild(dlBtn);
+
+    w.appendChild(card);
+
+    var footer = document.createElement('div');
+    footer.className = 'msg-footer';
+
+    var meta = document.createElement('span');
+    meta.className = 'timestamp';
+    meta.title = new Date(ts).toLocaleString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    var time = document.createTextNode(new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    meta.appendChild(time);
+
+    if (isMine && deliveryStatus) {
+      var status = document.createElement('span');
+      status.className = 'delivery-status ' + deliveryStatus + '-status';
+      status.textContent = deliveryStatus === 'delivered' ? '\u2713\u2713' : (deliveryStatus === 'sent' ? '\u2713' : '');
+      meta.appendChild(status);
+    }
+
+    footer.appendChild(meta);
+    w.appendChild(footer);
+
+    D.msgs.appendChild(w);
+    S.msgElements.push(w);
+
+    /* Track history for host transfer (skip during replay) */
+    if (!S._replayingHistory) {
+      var historySender = fromName || (isMine ? S.myName : S.peerName) || 'Unknown';
+      S.msgHistory.push({ type: 'file', name: name, size: size, data: base64, ts: ts || Date.now(), sender: historySender });
+    }
+
+    while (S.msgElements.length > S.maxMessages) {
+      var oldest = S.msgElements.shift();
+      if (oldest && oldest.parentNode) oldest.parentNode.removeChild(oldest);
+    }
+
+    if (!S.userScrolledUp) D.msgs.scrollTop = D.msgs.scrollHeight;
+    return w;
+  }
+
+
+  /* ==========================================================================
      ACTIVITY DETECTION — Resets inactivity fuse, syncs to peer
      ========================================================================== */
   function onActivity() {
@@ -616,6 +966,10 @@
       }, 3000);
       S.reconnectTimerId = reconnectTimeout;
 
+      conn.on('data', makeConnHandler(conn));
+      conn.on('close', function () { if (!S.destroyed) startReconnect(); });
+      conn.on('error', function () {});
+
       conn.on('open', function () {
         if (S.destroyed) { try { conn.close(); } catch (_) {} return; }
         clearTimeout(reconnectTimeout);
@@ -634,9 +988,6 @@
           try { conn.send({ type: 'name-exchange', name: S.myName }); } catch (_) {}
         }
 
-        conn.on('data', makeConnHandler(conn));
-        conn.on('close', function () { if (!S.destroyed) startReconnect(); });
-        conn.on('error', function () {});
         toast('Reconnected!', 'success');
       });
 
@@ -658,14 +1009,12 @@
     if (S.destroyed) return;
     S.destroyed = true;
 
-    if (S.role === 'host') {
+    if (reason !== 'host-transfer' && S.role === 'host') {
       S.conns.forEach(function (c) {
-        if (c && S.connected) {
+        if (c) {
           try { c.send({ type: 'room-destroy', reason: reason }); } catch (_) {}
         }
       });
-    } else if (S.conn && S.connected) {
-      try { S.conn.send({ type: 'room-destroy', reason: reason }); } catch (_) {}
     }
 
     hideDetails();
@@ -674,19 +1023,26 @@
     D.msgs.textContent = '';
     var emptyMsg = document.createElement('div');
     emptyMsg.className = 'chat-empty';
-    emptyMsg.textContent = 'Room destroyed. Nothing was saved.';
+    emptyMsg.textContent = reason === 'host-transfer' ? 'Host role transferred\u2026' : 'Room destroyed. Nothing was saved.';
     D.msgs.appendChild(emptyMsg);
     S.msgElements = [];
+    if (reason !== 'host-transfer') S.msgHistory = [];
     S.peerName = '';
     S.users = [];
+    S.blockedIPs = [];
+    S.allowedSenders = [];
+    S.guestUsers = [];
+    S.hostName = '';
+    S.senderAllowed = false;
+    S.roomMode = 'normal';
     updateChatHeader();
     if (D.btnUsersPanel) D.btnUsersPanel.classList.add('hidden');
-    D.usersOverlay.classList.add('hidden');
+    if (D.usersOverlay) D.usersOverlay.classList.add('hidden');
 
     if (D.joinCodeInput) D.joinCodeInput.value = '';
     updateJoinDisp();
 
-    renderCodePyramid('', D.hostCode);
+    renderCode('', D.hostCode);
     D.qrHost.textContent = '';
     var qrPlaceholder = document.createElement('div');
     qrPlaceholder.className = 'qr-placeholder';
@@ -718,6 +1074,7 @@
     if (S.reconnectTimerId) { clearTimeout(S.reconnectTimerId); S.reconnectTimerId = null; }
     if (S.typingThrottle) { clearTimeout(S.typingThrottle); S.typingThrottle = null; }
     if (S._usersRefreshInt) { clearInterval(S._usersRefreshInt); S._usersRefreshInt = null; }
+    if (S.toastTimeout) { clearTimeout(S.toastTimeout); S.toastTimeout = null; }
     stopRateLimiter();
     stopCamera();
     S.conns.forEach(function (c) { try { c.close(); } catch (_) {} });
@@ -732,12 +1089,22 @@
     S.connecting = false;
     S.guestCount = 0;
     S.users = [];
+    S.blockedIPs = [];
+    S.allowedSenders = [];
+    S.guestUsers = [];
+    S.hostName = '';
+    S.senderAllowed = false;
+    S.roomMode = 'normal';
     S.encryptionKey = null;
     S.encryptionKeyB64 = null;
     S.encryptionReady = false;
     S.reconnectAttempts = 0;
     S.peerTyping = false;
     S.localTyping = false;
+    S.leaving = false;
+    Object.keys(S.pendingDeliveries).forEach(function (id) {
+      clearTimeout(S.pendingDeliveries[id].timer);
+    });
     S.pendingDeliveries = {};
     S.msgCounter = 0;
     S.waitingForGuest = false;
@@ -745,6 +1112,7 @@
 
     hideTyping('guest');
     hideTyping('host');
+    if (S.audioCtx) { try { S.audioCtx.close(); } catch (_) {} S.audioCtx = null; }
     S.cameraStream = null;
     S.scannerActive = false;
     D.detailsQr.textContent = '';
@@ -784,10 +1152,10 @@
 
   var CODE_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   function genCode() {
-    var arr = new Uint32Array(8);
+    var arr = new Uint32Array(6);
     crypto.getRandomValues(arr);
     var code = '';
-    for (var i = 0; i < 8; i++) code += CODE_CHARS[arr[i] % 36];
+    for (var i = 0; i < 6; i++) code += CODE_CHARS[arr[i] % 36];
     return code;
   }
 
@@ -828,6 +1196,15 @@
 
             if (conn._uid) incrementUserMsgCount(conn._uid);
 
+            /* Host: forward to all OTHER guests */
+            if (S.role === 'host') {
+              S.conns.forEach(function (c) {
+                if (c !== conn) {
+                  try { c.send(data); } catch (_) {}
+                }
+              });
+            }
+
             if (data.id && conn) {
               try { conn.send({ type: 'delivered', id: data.id }); } catch (_) {}
             }
@@ -839,6 +1216,37 @@
               clearTimeout(S.pendingDeliveries[data.id].timer);
               delete S.pendingDeliveries[data.id];
               updateDeliveryStatus(data.id, 'delivered');
+            }
+            break;
+          }
+
+          case 'file': {
+            onActivity();
+            var fname = String(data.name || 'file');
+            var fdata = String(data.data || '');
+            var fsize = Number(data.size) || 0;
+            if (!fdata) break;
+            if (fdata.length > 5000000) { toast('File too large, skipped', 'error'); break; }
+
+            haptic(15);
+            renderDateSeparator(data.timestamp || Date.now());
+            var fileSender = data.sender || conn._name || 'Guest';
+            addFileMsg(fname, fsize, fdata, false, data.timestamp || Date.now(), data.id, null, fileSender);
+            playNotification();
+
+            if (conn._uid) incrementUserMsgCount(conn._uid);
+
+            /* Host: forward to all OTHER guests */
+            if (S.role === 'host') {
+              S.conns.forEach(function (c) {
+                if (c !== conn) {
+                  try { c.send(data); } catch (_) {}
+                }
+              });
+            }
+
+            if (data.id && conn) {
+              try { conn.send({ type: 'delivered', id: data.id }); } catch (_) {}
             }
             break;
           }
@@ -859,6 +1267,8 @@
                 addOrUpdateUser(conn._uid, conn._name, conn._ip || 'N/A');
                 renderUsersPanel();
               } else {
+                /* Guest stores host name */
+                S.hostName = conn._name;
                 S.peerName = conn._name;
                 updateChatHeader();
               }
@@ -868,6 +1278,17 @@
 
           case 'client-ip': {
             if (data.ip && typeof data.ip === 'string' && conn && conn._uid) {
+              conn._ip = data.ip;
+              if (S.blockedIPs.indexOf(data.ip) !== -1) {
+                conn._blocked = true;
+                if (S.guestCount > 0) S.guestCount--;
+                removeUserByUid(conn._uid);
+                S.conns = S.conns.filter(function (c) { return c !== conn; });
+                try { conn.send({ type: 'blocked' }); } catch (_) {}
+                try { conn.close(); } catch (_) {}
+                toast('Blocked user attempted to join', '');
+                break;
+              }
               var existing = S.users.find(function (u) { return u.uid === conn._uid; });
               if (existing) {
                 existing.ip = data.ip;
@@ -876,7 +1297,6 @@
                 addOrUpdateUser(conn._uid, conn._name || 'Guest', data.ip);
                 renderUsersPanel();
               }
-              conn._ip = data.ip;
             }
             break;
           }
@@ -905,16 +1325,16 @@
           case 'e2e-key-ack': {
             if (!S.encryptionReady && S.encryptionKey) {
               S.encryptionReady = true;
-              if (D.encryptBadge) D.encryptBadge.classList.remove('hidden');
-              D.input.disabled = false;
-              D.btnSend.disabled = false;
-              D.input.focus();
             }
+            if (D.encryptBadge) D.encryptBadge.classList.remove('hidden');
+            D.input.disabled = false;
+            D.btnSend.disabled = false;
+            D.input.focus();
             break;
           }
 
           case 'typing': {
-            showTyping('guest');
+            showTyping('guest', data.name);
             break;
           }
 
@@ -931,6 +1351,125 @@
           }
 
           case 'heartbeat-ack': {
+            S.lastHeartbeatAck = Date.now();
+            break;
+          }
+
+          case 'blocked': {
+            toast('You have been removed from this room.', 'error');
+            destroy('disconnect');
+            break;
+          }
+
+          case 'room-mode': {
+            if (data.mode && typeof data.mode === 'string') {
+              S.roomMode = data.mode === 'readonly' ? 'readonly' : 'normal';
+              updateRoomModeUI();
+            }
+            break;
+          }
+
+          case 'host-transfer': {
+            if (S.destroyed) break;
+            S.hostName = data.hostName;
+            toast(data.hostName + ' transferred host to you. Restarting as host\u2026', 'success');
+            var transferName = S.myName;
+            var transferCode = data.code;
+            var transferKey = data.encryptionKey;
+            var transferRoomMode = data.roomMode || 'normal';
+            var transferBlockedIPs = data.blockedIPs || [];
+            var transferAllowedSenders = data.allowedSenders || [];
+            var pendingHistory = [];
+
+            S._transferHistoryHandler = function (d) {
+              if (d && d.type === 'transfer-history' && Array.isArray(d.messages)) {
+                pendingHistory = pendingHistory.concat(d.messages);
+              }
+            };
+            if (S.conn) S.conn.on('data', S._transferHistoryHandler);
+
+            setTimeout(finishTransferReceive, 150);
+            var transferDone = false;
+
+            function finishTransferReceive() {
+              if (transferDone) return;
+              transferDone = true;
+              if (S.conn && S._transferHistoryHandler) {
+                S.conn.removeListener('data', S._transferHistoryHandler);
+                S._transferHistoryHandler = null;
+              }
+              S.msgHistory = pendingHistory;
+              destroy('host-transfer');
+              setTimeout(function () {
+                S.myName = transferName;
+                S.roomMode = transferRoomMode;
+                S.blockedIPs = transferBlockedIPs;
+                S.allowedSenders = transferAllowedSenders;
+                createRoomWithCode(transferCode, {
+                  history: S.msgHistory,
+                  encryptionKey: transferKey,
+                  roomMode: transferRoomMode,
+                  blockedIPs: transferBlockedIPs,
+                  allowedSenders: transferAllowedSenders,
+                  transfer: true
+                });
+              }, 200);
+            }
+            break;
+          }
+
+          case 'user-list': {
+            if (Array.isArray(data.users)) {
+              S.guestUsers = data.users;
+              renderGuestUserList();
+            }
+            break;
+          }
+
+          case 'sender-permission': {
+            S.senderAllowed = !!data.allowed;
+            updateRoomModeUI();
+            break;
+          }
+
+          case 'reconnect': {
+            var savedName = S.myName;
+            var savedCode = data.code;
+            var newHostName = data.hostName || 'Host';
+            var pendingHistory = [];
+
+            S._reconnectHistoryHandler = function (d) {
+              if (d && d.type === 'chat-history' && Array.isArray(d.messages)) {
+                pendingHistory = pendingHistory.concat(d.messages);
+              }
+            };
+            if (S.conn) S.conn.on('data', S._reconnectHistoryHandler);
+
+            if (!S.destroyed) destroy('host-transfer');
+            toast(newHostName + ' is now the host. Reconnecting\u2026', '');
+
+            setTimeout(function () {
+              if (S.conn && S._reconnectHistoryHandler) {
+                S.conn.removeListener('data', S._reconnectHistoryHandler);
+                S._reconnectHistoryHandler = null;
+              }
+              S.msgHistory = pendingHistory;
+              S.myName = savedName;
+              joinWithCode(savedCode, { history: pendingHistory });
+            }, 500);
+            break;
+          }
+
+          case 'transfer-history': {
+            /* Received during transfer — consumed by host-transfer handler above */
+            break;
+          }
+
+          case 'chat-history': {
+            if (Array.isArray(data.messages)) {
+              S.msgHistory = S.msgHistory.concat(data.messages);
+              replayHistory(S.msgHistory);
+            }
             break;
           }
         }
@@ -941,45 +1480,101 @@
   }
 
   /* ==========================================================================
-     HOST
+     HOST — Shared peer initialization for createRoom / createRoomWithCode
      ========================================================================== */
-  async function createRoom() {
+  async function initHostPeer(code, opts) {
+    opts = opts || {};
     if (S.destroyed) return;
     if (typeof Peer === 'undefined') { toast('PeerJS library failed to load.', 'error'); return; }
 
     if (S.peer) destroy('manual');
 
     S.destroyed = false;
-    var code = genCode();
     S.role = 'host';
     S.code = code;
     S.lastActivity = Date.now();
     S.encryptionReady = false;
     S.encryptionKey = null;
     S.encryptionKeyB64 = null;
+    S.guestCount = 0;
+    S.users = [];
+    S.conns = [];
 
-    try {
-      S.encryptionKey = await generateEncryptionKey();
-      S.encryptionKeyB64 = await exportKeyBase64(S.encryptionKey);
-    } catch (_) {
-      toast('Encryption init failed', 'error');
+    /* Import transferred encryption key or generate new one */
+    if (opts.encryptionKey) {
+      try {
+        var rawBytes = base64ToArrayBuffer(opts.encryptionKey);
+        S.encryptionKey = await importKey(new Uint8Array(rawBytes));
+        S.encryptionKeyB64 = opts.encryptionKey;
+        S.encryptionReady = true;
+      } catch (_) {
+        try {
+          S.encryptionKey = await generateEncryptionKey();
+          S.encryptionKeyB64 = await exportKeyBase64(S.encryptionKey);
+          S.encryptionReady = true;
+        } catch (_) {
+          toast('Encryption init failed', 'error');
+        }
+      }
+    } else {
+      try {
+        S.encryptionKey = await generateEncryptionKey();
+        S.encryptionKeyB64 = await exportKeyBase64(S.encryptionKey);
+        S.encryptionReady = true;
+      } catch (_) {
+        toast('Encryption init failed', 'error');
+      }
     }
+
+    /* Restore chat history from transfer */
+    if (opts.history && opts.history.length > 0) {
+      S.msgHistory = opts.history;
+    }
+
+    /* Restore transferred host rights */
+    if (opts.roomMode) S.roomMode = opts.roomMode;
+    if (opts.blockedIPs) S.blockedIPs = opts.blockedIPs;
+    if (opts.allowedSenders) S.allowedSenders = opts.allowedSenders;
 
     var peer = new Peer(code, peerOpts());
     S.peer = peer;
 
+    /* Host timeout: if signaling server unreachable */
+    var hostTimeout = setTimeout(function () {
+      if (!S.connected && !S.destroyed && S.role === 'host' && (!S.peer || !S.peer.id)) {
+        toast('Cannot reach signaling server. Try again.', 'error');
+        destroy('manual');
+      }
+    }, 20000);
+
     peer.on('open', function (id) {
-      renderCodePyramid(id, D.hostCode);
+      clearTimeout(hostTimeout);
+      renderCode(id, D.hostCode);
       genQR(id);
-      /* Store QR as data URL for details popup */
       try {
         var qrCanvas = D.qrHost.querySelector('canvas');
         if (qrCanvas) S.storedQR = qrCanvas.toDataURL();
       } catch (_) {}
-        /* Show host screen while waiting for guest */
-        S.waitingForGuest = true;
-        showScreen('host');
-      });
+      S.waitingForGuest = true;
+      showScreen('host');
+      if (opts.toast) toast(opts.toast, 'success');
+      /* After transfer: enter chat to show name + replay history */
+      if (opts.history && opts.history.length > 0) {
+        setTimeout(function () {
+          enterChat(S.code);
+          replayHistory(S.msgHistory);
+          D.input.disabled = true;
+          D.btnSend.disabled = true;
+          S.waitingForGuest = true;
+          D.chatDot.className = 'status-dot';
+          D.chatDot.style.background = 'var(--accent)';
+          D.chatDot.style.boxShadow = '0 0 8px var(--accent-glow)';
+          D.chatLabel.textContent = (S.myName || 'Host') + ' \u2014 Waiting for guests\u2026';
+        }, 200);
+      } else if (opts.transfer) {
+        enterChat(S.code, true);
+      }
+    });
 
     peer.on('connection', function (conn) {
       S.conns.push(conn);
@@ -987,7 +1582,9 @@
       S.guestCount++;
       S.lastActivity = Date.now();
 
-      conn._uid = ++_connIdCounter;
+      conn._uid = opts.connUid
+        ? opts.connUid()
+        : 'g' + (++_connIdCounter);
       conn._name = null;
       conn._ip = 'N/A';
 
@@ -999,16 +1596,13 @@
             var ip = 'N/A';
             var candidateId = null;
             stats.forEach(function (report) {
-              /* Try nominated candidate pair first */
               if (report.type === 'candidate-pair' && report.nominated && report.remoteCandidateId) {
                 candidateId = report.remoteCandidateId;
               }
-              /* Direct remote-candidate lookup */
               if (report.type === 'remote-candidate' && report.address && report.address !== '0.0.0.0' && report.address !== '::') {
                 ip = report.address;
               }
             });
-            /* Fallback: look up the candidate by ID */
             if (ip === 'N/A' && candidateId) {
               stats.forEach(function (report) {
                 if (report.id === candidateId && report.address && report.address !== '0.0.0.0' && report.address !== '::') {
@@ -1016,7 +1610,6 @@
                 }
               });
             }
-            /* Final fallback: any report with a real address */
             if (ip === 'N/A') {
               stats.forEach(function (report) {
                 if (ip === 'N/A' && report.address && report.address !== '0.0.0.0' && report.address !== '::' && !report.address.startsWith('0.')) {
@@ -1030,6 +1623,16 @@
       } catch (_) {}
       ipPromise.then(function (ip) {
         conn._ip = ip;
+        if (S.blockedIPs.indexOf(ip) !== -1) {
+          conn._blocked = true;
+          if (S.guestCount > 0) S.guestCount--;
+          removeUserByUid(conn._uid);
+          S.conns = S.conns.filter(function (c) { return c !== conn; });
+          try { conn.send({ type: 'blocked' }); } catch (_) {}
+          try { conn.close(); } catch (_) {}
+          toast('Blocked user attempted to join', '');
+          return;
+        }
         addOrUpdateUser(conn._uid, 'Guest', ip);
         renderUsersPanel();
       });
@@ -1051,20 +1654,34 @@
           doSend(3);
         }
       }
-      sendKeyToGuest(0);
-      sendKeyToGuest(500);
-      sendKeyToGuest(2000);
-
-      /* Send host name to guest */
-      if (S.myName) {
-        try { conn.send({ type: 'name-exchange', name: S.myName }); } catch (_) {}
-      }
 
       var onConnData = makeConnHandler(conn);
       conn.on('data', onConnData);
-      conn.on('open', function () { sendKeyToGuest(0); });
+      function sendInitToGuest() {
+        if (S.destroyed || conn._initSent) return;
+        conn._initSent = true;
+        sendKeyToGuest(0);
+        sendKeyToGuest(500);
+        sendKeyToGuest(2000);
+        if (S.myName) {
+          try { conn.send({ type: 'name-exchange', name: S.myName }); } catch (_) {}
+        }
+        if (S.roomMode) {
+          try { conn.send({ type: 'room-mode', mode: S.roomMode }); } catch (_) {}
+        }
+        var isAllowed = S.allowedSenders.indexOf(conn._uid) !== -1;
+        if (isAllowed) {
+          try { conn.send({ type: 'sender-permission', allowed: true }); } catch (_) {}
+        }
+        /* Send chat history to new guest */
+        if (S.msgHistory.length > 0) {
+          sendChunkedHistory(conn, S.msgHistory, 'chat-history');
+        }
+      }
+      conn.on('open', sendInitToGuest);
+      if (conn.open) sendInitToGuest();
       conn.on('close', function () {
-        if (S.destroyed) return;
+        if (S.destroyed || conn._blocked) return;
         var idx = S.conns.indexOf(conn);
         if (idx !== -1) S.conns.splice(idx, 1);
         if (S.guestCount > 0) S.guestCount--;
@@ -1091,47 +1708,71 @@
       /* First connection: init chat screen */
       if (D.msgs.children.length <= 1) {
         enterChat(S.code);
-        if (S.encryptionKey) {
-          D.input.disabled = true;
-          D.btnSend.disabled = true;
-          D.chatLabel.textContent = (S.myName || 'Host') + ' \u2014 Encrypting\u2026';
-          /* Safety fallback: enable after 30s if ack never arrives (bad network) */
-          setTimeout(function () {
-            if (D.input.disabled && !S.encryptionReady) {
-              S.encryptionReady = true;
-              D.input.disabled = false;
-              D.btnSend.disabled = false;
-              var label = S.myName || 'Host';
-              D.chatLabel.textContent = label + ' \u2014 ' + (S.guestCount === 1 ? '1 guest' : S.guestCount + ' guests');
-            }
-          }, 30000);
-        } else {
-          S.encryptionReady = true;
-          var label = S.myName || 'Host';
-          D.chatLabel.textContent = label + ' \u2014 ' + (S.guestCount === 1 ? '1 guest' : S.guestCount + ' guests');
-        }
+        S.encryptionReady = true;
+        D.input.disabled = false;
+        D.btnSend.disabled = false;
+        D.chatDot.className = 'status-dot connected';
+        D.chatDot.style.background = '';
+        D.chatDot.style.boxShadow = '';
+        var lbl = S.myName || 'Host';
+        D.chatLabel.textContent = lbl + ' \u2014 ' + (S.guestCount === 1 ? '1 guest' : S.guestCount + ' guests');
       } else {
         D.input.disabled = false;
         D.btnSend.disabled = false;
         D.chatDot.className = 'status-dot connected';
         D.chatDot.style.background = '';
         D.chatDot.style.boxShadow = '';
-        var label = S.myName || 'Host';
-        D.chatLabel.textContent = label + ' \u2014 ' + (S.guestCount === 1 ? '1 guest' : S.guestCount + ' guests');
+        var lbl = S.myName || 'Host';
+        D.chatLabel.textContent = lbl + ' \u2014 ' + (S.guestCount === 1 ? '1 guest' : S.guestCount + ' guests');
         toast('Guest connected', 'success');
       }
       initRateLimiter();
+      initHeartbeat();
       S.waitingForGuest = false;
       renderUsersPanel();
-      D.btnUsersPanel.classList.remove('hidden');
+      if (D.btnUsersPanel) D.btnUsersPanel.classList.remove('hidden');
+    });
+
+    peer.on('disconnected', function () {
+      if (S.destroyed || S.role !== 'host') return;
+      if (peer && !peer.destroyed) {
+        try { peer.reconnect(); } catch (_) {}
+      }
     });
 
     peer.on('error', function (err) {
       if (err.type === 'unavailable-id') {
-        toast('Code collision. Generating a new one\u2026', '');
-        setTimeout(function () { createRoom(); }, 600);
+        if (opts.onCollision) {
+          opts.onCollision();
+        } else {
+          toast('Code collision. Generating a new one\u2026', '');
+          setTimeout(function () { createRoom(); }, 600);
+        }
       } else {
         toast('Error: ' + err.message, 'error');
+      }
+    });
+  }
+
+  async function createRoom() {
+    var code = genCode();
+    initHostPeer(code, {});
+  }
+
+  async function createRoomWithCode(code, opts) {
+    opts = opts || {};
+    initHostPeer(code, {
+      toast: opts.toast || 'You are now the host',
+      connUid: function () { return 'g_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5); },
+      history: opts.history || [],
+      encryptionKey: opts.encryptionKey || null,
+      roomMode: opts.roomMode || 'normal',
+      blockedIPs: opts.blockedIPs || [],
+      allowedSenders: opts.allowedSenders || [],
+      transfer: !!opts.transfer,
+      onCollision: function () {
+        toast('Code collision. Retrying\u2026', '');
+        setTimeout(function () { createRoomWithCode(code, opts); }, 600);
       }
     });
   }
@@ -1139,7 +1780,8 @@
   /* ==========================================================================
      GUEST
      ========================================================================== */
-  function joinWithCode(code) {
+  function joinWithCode(code, opts) {
+    opts = opts || {};
     if (S.destroyed || S.connected || S.connecting) return;
     if (typeof Peer === 'undefined') { toast('PeerJS library failed to load.', 'error'); return; }
 
@@ -1152,6 +1794,7 @@
     S.encryptionReady = false;
     S.encryptionKey = null;
     S.encryptionKeyB64 = null;
+    S.msgHistory = opts.history || [];
     D.joinCodeDisp.textContent = '\u2022 \u2022 \u2022 Connecting \u2022 \u2022 \u2022';
 
     var peer = new Peer(peerOpts());
@@ -1170,14 +1813,22 @@
       var conn = peer.connect(code, { reliable: true });
       S.conn = conn;
 
-      conn.on('open', function () {
+      function onGuestConnOpen() {
+        if (conn._openFired) return;
+        conn._openFired = true;
         clearTimeout(joinTimeout);
         if (S.destroyed) { try { conn.close(); } catch (_) {} return; }
         S.connecting = false;
         S.connected = true;
         S.lastActivity = Date.now();
         enterChat(code);
+        /* Replay transferred chat history */
+        if (opts.history && opts.history.length > 0) {
+          S.msgHistory = opts.history;
+          setTimeout(function () { replayHistory(opts.history); }, 500);
+        }
         initRateLimiter();
+        initHeartbeat();
         /* Send name to host */
         if (S.myName) {
           try { conn.send({ type: 'name-exchange', name: S.myName }); } catch (_) {}
@@ -1188,11 +1839,14 @@
             try { conn.send({ type: 'client-ip', ip: d.ip }); } catch (_) {}
           }
         }).catch(function () {});
-      });
+      }
 
       conn.on('data', makeConnHandler(conn));
+      conn.on('open', onGuestConnOpen);
+      if (conn.open) onGuestConnOpen();
       conn.on('close', function () {
         S.connected = false;
+        if (S.leaving) return;
         if (!S.destroyed) { toast('Peer disconnected. Attempting reconnect\u2026', 'error'); startReconnect(); }
       });
       conn.on('error', function () {
@@ -1224,6 +1878,11 @@
     setTimeout(function () { D.nameInput.focus(); }, 150);
     S.pendingJoinCode = action === 'join' ? code : '';
     D.nameSubmit._action = action;
+
+    /* Room mode selector always hidden — toggled from users panel instead */
+    if (D.roomModeSelect) {
+      D.roomModeSelect.classList.add('hidden');
+    }
   }
 
   function updateChatHeader() {
@@ -1243,6 +1902,176 @@
       D.peerNameEl.textContent = '';
       D.peerNameEl.classList.add('hidden');
     }
+  }
+
+  function updateRoomModeUI() {
+    if (S.roomMode === 'readonly') {
+      if (S.role !== 'host') {
+        if (S.senderAllowed) {
+          D.input.disabled = false;
+          D.btnSend.disabled = false;
+          D.input.placeholder = 'You have send permission\u2026';
+        } else {
+          D.input.disabled = true;
+          D.btnSend.disabled = true;
+          D.input.placeholder = 'Room is in read-only mode\u2026';
+        }
+      }
+      if (D.encryptBadge) D.encryptBadge.classList.add('hidden');
+    } else {
+      if (S.role !== 'host') {
+        D.input.disabled = false;
+        D.btnSend.disabled = false;
+        D.input.placeholder = 'Type a message\u2026';
+      }
+    }
+  }
+
+  function toggleRoomMode() {
+    S.roomMode = S.roomMode === 'readonly' ? 'normal' : 'readonly';
+    if (S.role === 'host' && S.connected) {
+      S.conns.forEach(function (c) {
+        try { c.send({ type: 'room-mode', mode: S.roomMode }); } catch (_) {}
+      });
+    }
+    updateRoomModeUI();
+    renderUsersPanel();
+    toast(S.roomMode === 'readonly' ? 'Read-only mode enabled' : 'Normal mode enabled', '');
+  }
+
+  function blockIP(ip) {
+    if (!ip || ip === 'N/A') return;
+    if (S.blockedIPs.indexOf(ip) === -1) S.blockedIPs.push(ip);
+    S.conns.forEach(function (c) {
+      if (c._ip === ip) {
+        try { c.send({ type: 'blocked' }); } catch (_) {}
+        try { c.close(); } catch (_) {}
+      }
+    });
+    S.conns = S.conns.filter(function (c) { return c._ip !== ip; });
+    renderUsersPanel();
+    toast('Blocked IP: ' + ip, 'success');
+  }
+
+  function unblockIP(ip) {
+    var idx = S.blockedIPs.indexOf(ip);
+    if (idx !== -1) S.blockedIPs.splice(idx, 1);
+    renderUsersPanel();
+    toast('Unblocked IP: ' + ip, '');
+  }
+
+  function toggleSenderPermission(uid) {
+    var idx = S.allowedSenders.indexOf(uid);
+    if (idx !== -1) {
+      S.allowedSenders.splice(idx, 1);
+      toast('Send permission revoked', '');
+    } else {
+      S.allowedSenders.push(uid);
+      toast('Send permission granted', 'success');
+    }
+    broadcastAllowedSenders();
+    renderUsersPanel();
+  }
+
+  function broadcastAllowedSenders() {
+    if (S.role !== 'host') return;
+    S.conns.forEach(function (c) {
+      var uid = c._uid;
+      var allowed = S.allowedSenders.indexOf(uid) !== -1;
+      try { c.send({ type: 'sender-permission', allowed: allowed }); } catch (_) {}
+    });
+  }
+
+  function broadcastUserList() {
+    if (S.role !== 'host') return;
+    var userList = [{ name: S.myName, isHost: true }];
+    S.users.forEach(function (u) {
+      userList.push({ name: u.name, isHost: false });
+    });
+    S.conns.forEach(function (c) {
+      try { c.send({ type: 'user-list', users: userList }); } catch (_) {}
+    });
+  }
+
+  function makeHost(uid) {
+    if (S.role !== 'host') return;
+    var user = S.users.find(function (u) { return u.uid === uid; });
+    if (!user) return;
+
+    var targetConn = S.conns.find(function (c) { return c._uid === uid; });
+    if (!targetConn) { toast('User not connected', 'error'); return; }
+
+    var newCode = genCode();
+    var myName = S.myName;
+
+    toast('Transferring host to ' + user.name + '\u2026', '');
+
+    /* Fire everything — WebRTC buffers deliver even after destroy */
+    try {
+      targetConn.send({
+        type: 'host-transfer',
+        hostName: user.name,
+        code: newCode,
+        encryptionKey: S.encryptionKeyB64,
+        roomMode: S.roomMode,
+        blockedIPs: S.blockedIPs.slice(),
+        allowedSenders: S.allowedSenders.slice()
+      });
+      sendChunkedHistory(targetConn, S.msgHistory, 'transfer-history');
+    } catch (_) {}
+
+    S.conns.forEach(function (c) {
+      if (c !== targetConn) {
+        try {
+          c.send({ type: 'reconnect', code: newCode, hostName: user.name });
+          sendChunkedHistory(c, S.msgHistory, 'chat-history');
+        } catch (_) {}
+      }
+    });
+
+    /* Destroy immediately — messages already buffered in WebRTC send queue */
+    S.leaving = true;
+    setTimeout(function () {
+      S.leaving = false;
+      destroy('host-transfer');
+      setTimeout(function () {
+        S.myName = myName;
+        joinWithCode(newCode);
+      }, 500);
+    }, 50);
+  }
+
+  function renderGuestUserList() {
+    if (S.role === 'host') return;
+    D.usersList.textContent = '';
+
+    /* Host name at top with HOST tag */
+    var hostCard = document.createElement('div');
+    hostCard.className = 'guest-user-card host-card';
+    var hostNameEl = document.createElement('span');
+    hostNameEl.className = 'guest-user-name';
+    hostNameEl.textContent = S.hostName || 'Host';
+    var hostTag = document.createElement('span');
+    hostTag.className = 'host-tag';
+    hostTag.textContent = 'HOST';
+    hostCard.appendChild(hostNameEl);
+    hostCard.appendChild(hostTag);
+    D.usersList.appendChild(hostCard);
+
+    /* Other guests sorted alphabetically */
+    var guests = S.guestUsers
+      .filter(function (u) { return !u.isHost; })
+      .sort(function (a, b) { return a.name.localeCompare(b.name); });
+
+    guests.forEach(function (u) {
+      var card = document.createElement('div');
+      card.className = 'guest-user-card';
+      var nameEl = document.createElement('span');
+      nameEl.className = 'guest-user-name';
+      nameEl.textContent = u.name;
+      card.appendChild(nameEl);
+      D.usersList.appendChild(card);
+    });
   }
 
   /* ==========================================================================
@@ -1279,9 +2108,22 @@
       S.waitingForGuest = false;
     }
 
+    /* Apply room mode for guests */
+    if (S.role !== 'host') {
+      updateRoomModeUI();
+    }
+
     showScreen('chat');
     if (D.btnUsersPanel) {
-      D.btnUsersPanel.classList.toggle('hidden', S.role !== 'host');
+      D.btnUsersPanel.classList.remove('hidden');
+    }
+    /* Host sees destroy button; guest sees leave button */
+    if (S.role === 'host') {
+      if (D.btnDestroy) D.btnDestroy.classList.remove('hidden');
+      if (D.btnLeave) D.btnLeave.classList.add('hidden');
+    } else {
+      if (D.btnDestroy) D.btnDestroy.classList.add('hidden');
+      if (D.btnLeave) D.btnLeave.classList.remove('hidden');
     }
     if (!waiting) setTimeout(function () { D.input.focus(); }, 300);
   }
@@ -1291,7 +2133,7 @@
      ========================================================================== */
   function showDetails() {
     if (S.code) {
-      renderCodePyramid(S.code, D.detailsCode);
+      renderCode(S.code, D.detailsCode);
       if (S.storedQR) {
         D.detailsQr.textContent = '';
         var img = document.createElement('img');
@@ -1345,6 +2187,8 @@
         msgCount: 0,
       });
     }
+    renderUsersPanel();
+    broadcastUserList();
   }
 
   function removeUserByUid(uid) {
@@ -1352,6 +2196,7 @@
     if (idx !== -1) {
       S.users.splice(idx, 1);
       renderUsersPanel();
+      broadcastUserList();
     }
   }
 
@@ -1365,73 +2210,168 @@
 
   function renderUsersPanel() {
     D.usersList.textContent = '';
+
+    /* Room mode control for host */
+    if (S.role === 'host') {
+      var modeControl = document.createElement('div');
+      modeControl.className = 'room-mode-control';
+
+      var modeLabel = document.createElement('span');
+      modeLabel.className = 'room-mode-label';
+      modeLabel.textContent = 'Room Mode:';
+
+      var modeBtn = document.createElement('button');
+      modeBtn.className = 'room-mode-btn ' + (S.roomMode === 'readonly' ? 'readonly' : 'normal');
+      modeBtn.textContent = S.roomMode === 'readonly' ? 'Read Only' : 'Normal';
+      modeBtn.onclick = function () { toggleRoomMode(); };
+
+      modeControl.appendChild(modeLabel);
+      modeControl.appendChild(modeBtn);
+      D.usersList.appendChild(modeControl);
+    }
+
     if (S.users.length === 0) {
       var empty = document.createElement('div');
       empty.className = 'users-empty';
       empty.textContent = 'No users connected';
       D.usersList.appendChild(empty);
-      return;
+    } else {
+      S.users.forEach(function (user) {
+        var card = document.createElement('div');
+        card.className = 'user-card';
+
+        var avatar = document.createElement('div');
+        avatar.className = 'user-avatar';
+        avatar.textContent = user.name.charAt(0);
+
+        var info = document.createElement('div');
+        info.className = 'user-info';
+
+        var nameEl = document.createElement('div');
+        nameEl.className = 'user-name';
+        nameEl.textContent = user.name;
+
+        var meta = document.createElement('div');
+        meta.className = 'user-meta';
+
+        var ipSpan = document.createElement('span');
+        var ipLabel = document.createElement('span');
+        ipLabel.className = 'meta-label';
+        ipLabel.textContent = 'IP:';
+        var ipVal = document.createElement('span');
+        ipVal.textContent = user.ip;
+        ipSpan.appendChild(ipLabel);
+        ipSpan.appendChild(ipVal);
+
+        var timeSpan = document.createElement('span');
+        var timeLabel = document.createElement('span');
+        timeLabel.className = 'meta-label';
+        timeLabel.textContent = 'Joined:';
+        var timeVal = document.createElement('span');
+        var elapsed = Math.floor((Date.now() - user.joinTime) / 1000);
+        var mins = Math.floor(elapsed / 60);
+        var secs = elapsed % 60;
+        timeVal.textContent = mins + 'm ' + secs + 's ago';
+        timeSpan.appendChild(timeLabel);
+        timeSpan.appendChild(timeVal);
+
+        meta.appendChild(ipSpan);
+        meta.appendChild(timeSpan);
+        info.appendChild(nameEl);
+        info.appendChild(meta);
+
+        var stat = document.createElement('div');
+        stat.className = 'user-stat';
+        stat.textContent = user.msgCount + ' msgs';
+
+        var actions = document.createElement('div');
+        actions.className = 'user-actions';
+
+        var makeHostBtn = document.createElement('button');
+        makeHostBtn.className = 'user-makehost-btn';
+        makeHostBtn.textContent = 'Make Host';
+        makeHostBtn.onclick = function (e) {
+          e.stopPropagation();
+          showConfirm('Transfer host to ' + user.name + '?').then(function (ok) {
+            if (ok) makeHost(user.uid);
+          });
+        };
+
+        var allowBtn = document.createElement('button');
+        allowBtn.className = 'user-allow-btn';
+        var isAllowed = S.allowedSenders.indexOf(user.uid) !== -1;
+        allowBtn.textContent = isAllowed ? 'Deny Send' : 'Allow Send';
+        allowBtn.classList.toggle('allowed', isAllowed);
+        allowBtn.onclick = function (e) {
+          e.stopPropagation();
+          toggleSenderPermission(user.uid);
+        };
+
+        var blockBtn = document.createElement('button');
+        blockBtn.className = 'user-block-btn';
+        blockBtn.textContent = 'Block';
+        blockBtn.onclick = function (e) {
+          e.stopPropagation();
+          showConfirm('Block IP ' + user.ip + '?').then(function (ok) {
+            if (ok) blockIP(user.ip);
+          });
+        };
+
+        actions.appendChild(makeHostBtn);
+        if (S.roomMode === 'readonly') actions.appendChild(allowBtn);
+        actions.appendChild(blockBtn);
+
+        var topRow = document.createElement('div');
+        topRow.className = 'user-card-top';
+        topRow.appendChild(avatar);
+        topRow.appendChild(info);
+        topRow.appendChild(stat);
+
+        card.appendChild(topRow);
+        card.appendChild(actions);
+        D.usersList.appendChild(card);
+      });
     }
-    S.users.forEach(function (user) {
-      var card = document.createElement('div');
-      card.className = 'user-card';
 
-      var avatar = document.createElement('div');
-      avatar.className = 'user-avatar';
-      avatar.textContent = user.name.charAt(0);
+    /* Blocked IPs section */
+    if (S.role === 'host' && S.blockedIPs.length > 0) {
+      var blockedHeader = document.createElement('div');
+      blockedHeader.className = 'blocked-header';
+      blockedHeader.textContent = 'Blocked IPs';
+      D.usersList.appendChild(blockedHeader);
 
-      var info = document.createElement('div');
-      info.className = 'user-info';
+      S.blockedIPs.forEach(function (ip) {
+        var blockedCard = document.createElement('div');
+        blockedCard.className = 'blocked-card';
 
-      var nameEl = document.createElement('div');
-      nameEl.className = 'user-name';
-      nameEl.textContent = user.name;
+        var ipText = document.createElement('span');
+        ipText.className = 'blocked-ip';
+        ipText.textContent = ip;
 
-      var meta = document.createElement('div');
-      meta.className = 'user-meta';
+        var unblockBtn = document.createElement('button');
+        unblockBtn.className = 'user-unblock-btn';
+        unblockBtn.textContent = 'Unblock';
+        unblockBtn.onclick = function () { unblockIP(ip); };
 
-      var ipSpan = document.createElement('span');
-      var ipLabel = document.createElement('span');
-      ipLabel.className = 'meta-label';
-      ipLabel.textContent = 'IP:';
-      var ipVal = document.createElement('span');
-      ipVal.textContent = user.ip;
-      ipSpan.appendChild(ipLabel);
-      ipSpan.appendChild(ipVal);
-
-      var timeSpan = document.createElement('span');
-      var timeLabel = document.createElement('span');
-      timeLabel.className = 'meta-label';
-      timeLabel.textContent = 'Joined:';
-      var timeVal = document.createElement('span');
-      var elapsed = Math.floor((Date.now() - user.joinTime) / 1000);
-      var mins = Math.floor(elapsed / 60);
-      var secs = elapsed % 60;
-      timeVal.textContent = mins + 'm ' + secs + 's ago';
-      timeSpan.appendChild(timeLabel);
-      timeSpan.appendChild(timeVal);
-
-      meta.appendChild(ipSpan);
-      meta.appendChild(timeSpan);
-      info.appendChild(nameEl);
-      info.appendChild(meta);
-
-      var stat = document.createElement('div');
-      stat.className = 'user-stat';
-      stat.textContent = user.msgCount + ' msgs';
-
-      card.appendChild(avatar);
-      card.appendChild(info);
-      card.appendChild(stat);
-      D.usersList.appendChild(card);
-    });
+        blockedCard.appendChild(ipText);
+        blockedCard.appendChild(unblockBtn);
+        D.usersList.appendChild(blockedCard);
+      });
+    }
   }
 
   function showUsersPanel() {
-    renderUsersPanel();
+    if (S.role === 'host') {
+      renderUsersPanel();
+    } else {
+      renderGuestUserList();
+    }
     D.usersOverlay.classList.remove('hidden');
     if (S._usersRefreshInt) clearInterval(S._usersRefreshInt);
-    S._usersRefreshInt = setInterval(renderUsersPanel, 10000);
+    S._usersRefreshInt = setInterval(function () {
+      if (S.role === 'host') renderUsersPanel();
+      else renderGuestUserList();
+    }, 10000);
   }
 
   function hideUsersPanel() {
@@ -1443,6 +2383,35 @@
      PWA — Install Prompt
      ========================================================================== */
   function initPwaInstall() {
+    var isFirefox = typeof InstallTrigger !== 'undefined' || navigator.userAgent.indexOf('Firefox') !== -1;
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var isSafari = isIOS && navigator.userAgent.indexOf('Safari') !== -1 && navigator.userAgent.indexOf('CriOS') === -1;
+    if (isFirefox && !S.installDismissed && !S.connected) {
+      D.installBtn.textContent = 'How to Install';
+      D.installBtn.addEventListener('click', function () {
+        D.installBanner.classList.add('hidden');
+        toast('Firefox: click the address bar icon (pencil) or use the menu \u2192 "Install Page as App"', 'info', 6000);
+      });
+      D.installDismiss.addEventListener('click', function () {
+        D.installBanner.classList.add('hidden');
+        S.installDismissed = true;
+      });
+      setTimeout(function () { D.installBanner.classList.remove('hidden'); }, 3000);
+      return;
+    }
+    if (isSafari && !S.installDismissed && !S.connected) {
+      D.installBtn.textContent = 'How to Install';
+      D.installBtn.addEventListener('click', function () {
+        D.installBanner.classList.add('hidden');
+        toast('Safari: tap the Share button \u2192 "Add to Home Screen"', 'info', 6000);
+      });
+      D.installDismiss.addEventListener('click', function () {
+        D.installBanner.classList.add('hidden');
+        S.installDismissed = true;
+      });
+      setTimeout(function () { D.installBanner.classList.remove('hidden'); }, 3000);
+      return;
+    }
     window.addEventListener('beforeinstallprompt', function (e) {
       e.preventDefault();
       S.deferredPrompt = e;
@@ -1523,11 +2492,8 @@
   }
 
   function handleError(context, error) {
-    if (error && error.message) {
-      console.error('[' + context + ']', error.message);
-    } else {
-      console.error('[' + context + ']', error);
-    }
+    var msg = (error && error.message) ? error.message : String(error);
+    toast('Error: ' + msg, 'error');
   }
 
   /* ==========================================================================
@@ -1588,10 +2554,6 @@
     }
   }
 
-  function onVisibilityChange() {
-    /* timers removed — no-op */
-  }
-
   /* ==========================================================================
      INIT
      ========================================================================== */
@@ -1607,6 +2569,41 @@
     $('#btn-host').addEventListener('click', function () { showNamePrompt('host'); });
     $('#btn-join').addEventListener('click', function () { showScreen('join'); });
 
+    /* Help Panel */
+    (function () {
+      var panel = document.getElementById('help-panel');
+      var overlay = document.getElementById('help-overlay');
+      var btnOpen = document.getElementById('btn-help-open');
+      var btnClose = document.getElementById('btn-help-close');
+      var searchInput = document.getElementById('help-search-input');
+      var sections = panel ? panel.querySelectorAll('.help-section') : [];
+
+      function openHelp() {
+        if (!panel || !overlay) return;
+        overlay.classList.remove('hidden');
+        panel.classList.add('open');
+        if (searchInput) { searchInput.value = ''; filterHelp(''); searchInput.focus(); }
+      }
+      function closeHelp() {
+        if (!panel || !overlay) return;
+        panel.classList.remove('open');
+        setTimeout(function () { overlay.classList.add('hidden'); }, 350);
+      }
+      function filterHelp(query) {
+        var q = query.toLowerCase().trim();
+        sections.forEach(function (sec) {
+          if (!q) { sec.classList.remove('hidden-section'); return; }
+          var searchText = (sec.getAttribute('data-search') || '') + ' ' + sec.textContent.toLowerCase();
+          var match = q.split(/\s+/).every(function (term) { return searchText.indexOf(term) !== -1; });
+          sec.classList.toggle('hidden-section', !match);
+        });
+      }
+      if (btnOpen) btnOpen.addEventListener('click', openHelp);
+      if (btnClose) btnClose.addEventListener('click', closeHelp);
+      if (overlay) overlay.addEventListener('click', closeHelp);
+      if (searchInput) searchInput.addEventListener('input', function () { filterHelp(searchInput.value); });
+    })();
+
     /* Theme toggles */
     function onToggleTheme() { toggleTheme(); }
     var themeBtns = ['theme-toggle', 'theme-toggle-host', 'theme-toggle-join', 'theme-toggle-chat'];
@@ -1620,7 +2617,7 @@
     $('#btn-host-details').addEventListener('click', showDetails);
     $('#btn-copy-code').addEventListener('click', function () {
       if (S.code) {
-        navigator.clipboard.writeText(S.code).then(function () {
+        safeCopy(S.code).then(function () {
           toast('Code copied!', 'success');
         }).catch(function () {
           toast('Failed to copy', 'error');
@@ -1633,7 +2630,7 @@
       if (navigator.share) {
         navigator.share({ title: 'Mangaud-Chatting', text: 'Join my encrypted chat: ' + S.code, url: shareUrl }).catch(function () {});
       } else {
-        navigator.clipboard.writeText(shareUrl).then(function () { toast('Link copied!', 'success'); }).catch(function () { toast('Failed to copy', 'error'); });
+        safeCopy(shareUrl).then(function () { toast('Link copied!', 'success'); }).catch(function () { toast('Failed to copy', 'error'); });
       }
     });
 
@@ -1645,7 +2642,7 @@
       if (e.key === 'Enter' && !D.btnJoinSubmit.disabled) { e.preventDefault(); D.btnJoinSubmit.click(); }
     });
     D.btnJoinSubmit.addEventListener('click', function () {
-      if (D.joinCodeInput.value.length === 8) showNamePrompt('join', D.joinCodeInput.value.toUpperCase());
+      if (D.joinCodeInput.value.length === 6) showNamePrompt('join', D.joinCodeInput.value.toUpperCase());
     });
 
     /* Scanner */
@@ -1664,6 +2661,7 @@
       S.myName = name;
       D.nameOverlay.classList.add('hidden');
       if (D.nameSubmit._action === 'host') {
+        S.roomMode = 'normal';
         toast('Creating room\u2026', '');
         createRoom();
       } else if (S.pendingJoinCode) {
@@ -1692,7 +2690,7 @@
     D.btnDetailsClose.addEventListener('click', hideDetails);
     D.detailsBtnCopy.addEventListener('click', function () {
       if (S.code) {
-        navigator.clipboard.writeText(S.code).then(function () {
+        safeCopy(S.code).then(function () {
           toast('Code copied!', 'success');
         }).catch(function () {
           toast('Could not copy', 'error');
@@ -1705,7 +2703,7 @@
       if (navigator.share) {
         navigator.share({ title: 'Mangaud-Chatting', text: 'Join my encrypted chat: ' + S.code, url: shareUrl }).catch(function () {});
       } else {
-        navigator.clipboard.writeText(shareUrl).then(function () { toast('Link copied!', 'success'); }).catch(function () { toast('Failed to copy', 'error'); });
+        safeCopy(shareUrl).then(function () { toast('Link copied!', 'success'); }).catch(function () { toast('Failed to copy', 'error'); });
       }
     });
     D.detailsOverlay.addEventListener('click', function (e) {
@@ -1727,6 +2725,17 @@
 
     /* Chat */
     D.btnSend.addEventListener('click', sendMsg);
+    var fileInput = document.getElementById('file-input');
+    var btnFile = document.getElementById('btn-file');
+    if (btnFile && fileInput) {
+      btnFile.addEventListener('click', function () { fileInput.click(); });
+      fileInput.addEventListener('change', function () {
+        var files = fileInput.files;
+        if (!files || !files.length) return;
+        for (var i = 0; i < files.length; i++) { sendFile(files[i]); }
+        fileInput.value = '';
+      });
+    }
     D.input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
     });
@@ -1750,7 +2759,7 @@
       onLocalInput();
     });
 
-    /* Destroy with confirmation (double-tap) */
+    /* Destroy with confirmation (double-tap) — HOST ONLY */
     var destroyPending = false;
     D.btnDestroy.addEventListener('click', function () {
       if (destroyPending) { destroyPending = false; destroy('manual'); return; }
@@ -1763,6 +2772,36 @@
         D.btnDestroy.style.color = '';
         D.btnDestroy.style.background = '';
         D.btnDestroy.textContent = '\u00D7';
+      }, 2500);
+    });
+
+    /* Leave room — GUEST ONLY (disconnects without destroying room) */
+    var leavePending = false;
+    D.btnLeave.addEventListener('click', function () {
+      if (leavePending) {
+        leavePending = false;
+        S.leaving = true;
+        try { if (S.conn) S.conn.close(); } catch (_) {}
+        try { if (S.peer) S.peer.destroy(); } catch (_) {}
+        S.conn = null;
+        S.peer = null;
+        S.connected = false;
+        S.connecting = false;
+        S.role = null;
+        S.code = null;
+        showScreen('landing');
+        toast('Left the room.', '');
+        return;
+      }
+      leavePending = true;
+      D.btnLeave.style.color = 'var(--danger)';
+      D.btnLeave.style.background = 'var(--danger-soft)';
+      D.btnLeave.textContent = '\u2713';
+      setTimeout(function () {
+        leavePending = false;
+        D.btnLeave.style.color = '';
+        D.btnLeave.style.background = '';
+        D.btnLeave.textContent = '\u2190';
       }, 2500);
     });
 
@@ -1794,7 +2833,7 @@
       if (!msgEl) return;
       var msgText = _msgTextMap.get(msgEl);
       if (!msgText) return;
-      navigator.clipboard.writeText(msgText).then(function () {
+      safeCopy(msgText).then(function () {
         btn.classList.add('copied');
         btn.textContent = 'Copied!';
         toast('Copied', 'success');
@@ -1814,7 +2853,7 @@
       e.preventDefault();
       var textEl = msgEl.querySelector('.msg-text');
       if (!textEl || !textEl.textContent) return;
-      navigator.clipboard.writeText(textEl.textContent).then(function () {
+      safeCopy(textEl.textContent).then(function () {
         toast('Message copied', 'success');
       }).catch(function () {
         toast('Could not copy', 'error');
@@ -1841,7 +2880,6 @@
 
     /* Security hooks */
     window.addEventListener('beforeunload', onBeforeUnload);
-    document.addEventListener('visibilitychange', onVisibilityChange);
 
     /* Refresh lock — prevent accidental refresh while in a room */
     document.addEventListener('keydown', function (e) {
@@ -1870,18 +2908,14 @@
     /* Auto-join if URL contains ?code= parameter */
     var urlParams = new URLSearchParams(window.location.search);
     var sharedCode = urlParams.get('code');
-    if (sharedCode && /^[0-9A-Z]{8}$/.test(sharedCode.toUpperCase())) {
+    if (sharedCode && /^[0-9A-Z]{6}$/.test(sharedCode.toUpperCase())) {
       setTimeout(function () { showNamePrompt('join', sharedCode.toUpperCase()); }, 300);
     }
 
   }
 
-  window.addEventListener('error', function (e) {
-    console.error('Global error:', e.message);
-    var toastEl = D && D.toast ? D.toast : null;
-    if (toastEl) {
-      toast('Something went wrong. Refresh the page.', 'error');
-    }
+  window.addEventListener('error', function () {
+    toast('Something went wrong. Refresh the page.', 'error');
   });
 
   if (document.readyState === 'loading') {

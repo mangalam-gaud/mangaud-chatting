@@ -2,11 +2,12 @@
   "name": "MANGAUD",
   "short_name": "MANGAUD",
   "description": "Zero-persistence, peer-to-peer encrypted messaging. Rooms self-destruct. Nothing is saved.",
+  "id": "/",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#06060e",
-  "theme_color": "#00f5ff",
+  "theme_color": "#06060e",
   "scope": "/",
   "categories": ["communication", "social", "utilities"],
   "lang": "en",
@@ -18,7 +19,22 @@
     { "src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
     { "src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
-  "screenshots": [],
+  "screenshots": [
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "MANGAUD encrypted messenger"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "MANGAUD encrypted messenger"
+    }
+  ],
   "shortcuts": [
     {
       "name": "Host a Room",

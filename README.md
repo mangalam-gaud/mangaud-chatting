@@ -1,11 +1,11 @@
 # MANGAUD
 
-> **Encrypted peer-to-peer messenger.** Zero servers. Zero persistence. Glassmorphism + Cyberpunk UI.
+> **Encrypted peer-to-peer messenger.** Zero servers. Zero persistence. Soft Neon UI.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-00f5ff.svg)](./LICENSE)
-[![PWA Ready](https://img.shields.io/badge/PWA-Ready-00ff88.svg)](#pwa)
-[![Security](https://img.shields.io/badge/AES--256--GCM-Secure-ff3366.svg)](#security)
-[![PeerJS](https://img.shields.io/badge/WebRTC-PeerJS-7c3aed.svg)](#tech-stack)
+[![License: MIT](https://img.shields.io/badge/License-MIT-7c6aef.svg)](./LICENSE)
+[![PWA Ready](https://img.shields.io/badge/PWA-Ready-00d4aa.svg)](#pwa)
+[![Security](https://img.shields.io/badge/AES--256--GCM-Secure-ff4d6a.svg)](#security)
+[![PeerJS](https://img.shields.io/badge/WebRTC-PeerJS-7c6aef.svg)](#tech-stack)
 
 **[Live Demo](https://mangaud-chatting.netlify.app)** | **[Report Issue](https://github.com/mangalam-gaud/mangaud-chatting/issues)**
 
@@ -15,30 +15,59 @@
 
 A zero-persistence, peer-to-peer encrypted messenger with **multi-guest support**. Messages exist only in RAM and vanish the moment you close the tab. No servers. No databases. No logs. Just pure, encrypted conversations with unlimited participants in a room.
 
-Designed with a **glassmorphism + cyberpunk** aesthetic — frosted glass panels, neon accents, and a dark cyberpunk atmosphere that works beautifully in both dark and light modes.
+Designed with a **Soft Neon** aesthetic — deep space dark backgrounds, electric indigo accents, teal secondary, frosted glass panels, and smooth animations that work beautifully in both dark and light modes.
 
 ---
 
 ## Features
 
+### Core
 - **AES-256-GCM Encryption** — Military-grade encryption via Web Crypto API with per-message random IVs
 - **Multi-Guest Support** — Unlimited guests can join a single room, all seeing messages in real-time
-- **Peer-to-Peer** — Direct WebRTC connections (PeerJS), no relay servers, no data storage
+- **Peer-to-Peer** — Direct WebRTC connections (PeerJS) with STUN/TURN for NAT traversal
 - **Zero Persistence** — No localStorage, IndexedDB, or cookies. Close tab = everything vanishes
+- **Room Persistence** — Room stays alive when guests leave; only host disconnect destroys it
+
+### Messaging
+- **Sender Names** — Every message shows who sent it; host name shows with "(Host)" tag
+- **Multiline Code Sharing** — Paste code blocks, renders in monospace with dark background
+- **Copy Button** — Per-message copy with "Copied!" feedback, plus right-click shortcut
+- **Delivery Status** — Single check (sent) → double check (delivered) via ACK protocol
+- **Typing Indicators** — Shows peer's actual name when typing
+- **Notification Sound** — Optional audio chime on new messages (togglable)
+- **50K Character Limit** — Messages truncated with warning if too long
+- **Date Separators** — "Today", "Yesterday", or date between message groups
+- **Haptic Feedback** — Vibration on send/receive (mobile devices)
+
+### Host Controls
+- **Users Panel** — Live panel showing each guest's name, IP, join time, and message count
+- **Block IP** — Kick and block any user by IP; blocked users cannot rejoin
+- **Make Host** — Transfer host role to any connected user; all guests auto-reconnect
+- **Room Mode** — Toggle between Normal (everyone sends) and Read-Only (host only)
+- **Allow Send** — Grant specific users permission to send in read-only mode
+- **Room Destruction** — Double-tap to confirm; notifies all guests before cleanup
+
+### QR & Sharing
+- **QR Code Generation** — Room code displayed as QR for easy sharing
+- **QR Code Scanning** — Camera scanner with animated scan line, auto-joins on detection
+- **Shared Link Joining** — Share URL with `?code=XXXXXXXX`, auto-opens name prompt
+- **Diamond/Pyramid Code Display** — 8-character codes shown in 1-2-3-2 pyramid pattern
+
+### UX
+- **Dark / Light Mode** — Respects OS preference with manual toggle on every screen
 - **Refresh Lock** — Prevents accidental F5/Ctrl+R while in a room
-- **Users Panel (Host)** — Live panel showing each guest's name, IP, join time, and message count
-- **Sender Names** — Every message shows who sent it (all guest names + host name)
-- **Copy Icon + Right-Click Copy** — Always-visible copy button on every message, plus right-click shortcut
-- **QR Code Sharing + Scanning** — Generate QR codes to share room, scan to join instantly
-- **Shared Link Joining** — Share a URL with `?code=XXXXXXXX`, recipient auto-joins
-- **Diamond / Pyramid Code Display** — 8-character room codes shown in a diamond pattern for visual clarity
-- **Dark / Light Mode** — Respects OS preference with manual toggle, both modes professionally themed
-- **PWA Installable** — Works like a native app on Android, iOS, and Desktop
-- **8-Character Room Codes** — Cryptographically random (36^8 possibilities via `crypto.getRandomValues()`)
-- **No Timers** — Rooms persist until tab is closed (never auto-destroy from inactivity)
-- **Typing Indicators** — See when someone is typing
-- **Notification Sound** — Optional audio chime on new messages
-- **Delivery Status** — Sent / Delivered indicators on your messages
+- **Auto-Scroll** — New messages scroll to bottom unless you've scrolled up
+- **Scroll-to-Bottom Button** — Floating button appears when scrolled up
+- **Auto-Resize Textarea** — Input grows as you type, up to 120px
+- **Paste Handling** — Preserves formatting and cursor position
+
+### PWA
+- **Installable** — Works like a native app on Android, iOS, and Desktop
+- **Offline Support** — App shell cached by service worker after first visit
+- **Auto-Update** — Service worker detects new versions and prompts to refresh
+- **App Shortcuts** — "Host a Room" and "Join a Room" on long-press
+- **Standalone Mode** — No browser chrome, full-screen experience
+- **Maskable Icons** — Adaptive icon support on Android
 
 ---
 
@@ -47,8 +76,9 @@ Designed with a **glassmorphism + cyberpunk** aesthetic — frosted glass panels
 ### Host a Room
 1. Click **Host a Room**
 2. Enter your name
-3. Share the 8-character code, QR code, or link with others
-4. Each guest who joins appears in the **Users Panel** (`👥` button)
+3. Choose **Normal** or **Read-Only** mode
+4. Share the 8-character code, QR code, or link with others
+5. Each guest who joins appears in the **Users Panel** (click the users icon)
 
 ### Join a Room
 1. Click **Join a Room** (or open a shared `?code=XXXXXXXX` link)
@@ -79,10 +109,11 @@ Host generates room code (8-char alphanumeric)
 
 ### Encryption Flow
 ```
-Guest sends:
+Sender:
   plaintext --> AES-256-GCM encrypt(randomIV, key) --> WebRTC --> Host
+
 Host broadcasts:
-  decrypt(key, ciphertext, IV) --> display + re-encrypt --> forward to others
+  decrypt(key, ciphertext, IV) --> display + re-encrypt --> forward to all guests
 ```
 
 ---
@@ -100,6 +131,9 @@ Host broadcasts:
 | **XSS Protection** | `textContent` / `createTextNode` only — never `innerHTML` with user input |
 | **Message IDs** | Cryptographically random per message for delivery tracking |
 | **Rate Limiting** | Token-bucket algorithm prevents abuse |
+| **CSP** | Strict Content-Security-Policy (script/style/img/connect sources) |
+| **SRI** | Subresource Integrity hashes on all CDN scripts |
+| **IP Blocking** | Host can block IPs to prevent rejoin |
 
 See [SECURITY.md](./SECURITY.md) for detailed security documentation.
 
@@ -109,13 +143,13 @@ See [SECURITY.md](./SECURITY.md) for detailed security documentation.
 
 | Layer | Technology |
 |-------|-----------|
-| **Frontend** | HTML5, CSS3 (Glassmorphism + Cyberpunk), Vanilla JS |
+| **Frontend** | HTML5, CSS3 (Soft Neon theme), Vanilla JS |
 | **Networking** | WebRTC via PeerJS |
 | **Encryption** | Web Crypto API — AES-256-GCM |
 | **QR Generation** | QRCode.js |
 | **QR Scanning** | jsQR |
 | **PWA** | Service Worker (cache-first) + Web App Manifest |
-| **Fonts** | Inter (UI) + JetBrains Mono (code) |
+| **Fonts** | Inter (UI) + JetBrains Mono (code) via Google Fonts |
 | **Hosting** | Static (Netlify, Vercel, GitHub Pages, etc.) |
 
 ---
@@ -124,19 +158,20 @@ See [SECURITY.md](./SECURITY.md) for detailed security documentation.
 
 ```
 mangaud-chatting/
-├── index.html            # All app screens (landing, host, join, chat, overlays)
+├── index.html            # All screens (landing, host, join, chat, overlays, scanner)
 ├── manifest.json         # PWA manifest (name: "MANGAUD")
 ├── sw.js                 # Service worker (cache-first, v12)
+├── .netlify.toml         # Netlify config (SPA redirect, security headers, cache control)
 ├── css/
-│   └── style.css         # Soft Neon theme (~1033 lines)
-├── js/
-│   └── app.js            # All application logic (~1684 lines)
+│   └── style.css         # Soft Neon theme (~1413 lines)
+├ js/
+│   └── app.js            # All application logic (~2494 lines)
 ├── scripts/
 │   └── gen-icons.py      # Icon resizing script (Python Pillow)
 ├── assets/
 │   ├── logo.jpeg         # Original brand logo
-│   ├── icon-192.png      # PWA icon (192×192)
-│   └── icon-512.png      # PWA icon (512×512)
+│   ├── icon-192.png      # PWA icon (192x192)
+│   └── icon-512.png      # PWA icon (512x512)
 ├── README.md
 ├── SECURITY.md
 └── LICENSE               # MIT
@@ -148,19 +183,28 @@ mangaud-chatting/
 
 MANGAUD is a fully-featured Progressive Web App:
 
-- **Install prompts** on Android (Chrome), iOS (Safari Share → Add to Home Screen), and Desktop (address bar install icon)
+- **Install prompts** on Android (Chrome), iOS (Safari Share > Add to Home Screen), and Desktop (address bar install icon)
 - **Offline support** — App shell cached by service worker after first visit
+- **Auto-update** — Service worker detects new versions and shows update banner
 - **Maskable icons** for adaptive icon support on Android
 - **Standalone mode** — No browser chrome, full-screen experience
-- **Shortcuts** for quick Host/Join actions
+- **Shortcuts** for quick Host/Join actions on long-press
+- **Online/offline detection** — Toast notifications for connectivity changes
+
+### Service Worker Strategy
+| Request Type | Strategy |
+|-------------|----------|
+| Local assets | Cache-first with stale-while-revalidate |
+| CDN scripts | Cache-first with network fallback |
+| External APIs | Network-only with offline fallback |
 
 ### Install Instructions
 | Platform | Steps |
 |----------|-------|
 | **Android Chrome** | Tap "Add to Home Screen" when prompted |
-| **iOS Safari** | Share → Add to Home Screen |
+| **iOS Safari** | Share > Add to Home Screen |
 | **Desktop Chrome** | Click install icon in address bar |
-| **Desktop Edge** | Settings → Apps → Install |
+| **Desktop Edge** | Settings > Apps > Install |
 
 ---
 
@@ -199,9 +243,41 @@ Ensure your host:
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Send message |
+| `Enter` | Send message / Submit code / Submit name |
+| `Shift + Enter` | New line in message |
 | `Escape` | Close active overlay (name prompt / details / users / scanner) |
+| `F5 / Ctrl+R` | Blocked while in a room (prevents accidental refresh) |
 | `Right-click` on message | Copy message text |
+
+---
+
+## Responsive Design
+
+| Breakpoint | Behavior |
+|------------|----------|
+| <= 320px | Ultra-compact layout, smallest fonts |
+| <= 380px | Compact padding, smaller elements |
+| 400-599px | Default mobile layout (520px max-width) |
+| 600px+ | Wider container (560px), larger elements |
+| 900px+ | Desktop width (600px) |
+| >= 800px height | More vertical spacing |
+
+---
+
+## Animations
+
+| Animation | Purpose |
+|-----------|---------|
+| `fadeUp` | Messages and screen transitions |
+| `scaleIn` | Cards, panels, popups |
+| `pulse` | Status dots, loading indicators |
+| `borderGlow` | Filled pyramid characters |
+| `float` | Brand logo bobbing |
+| `gradientShift` | Landing page background |
+| `scanLine` | QR scanner scanning line |
+| `toastIn/Out` | Toast notifications |
+
+All animations respect `prefers-reduced-motion: reduce` for accessibility.
 
 ---
 
@@ -213,7 +289,7 @@ pip install Pillow
 python scripts/gen-icons.py
 ```
 
-This creates circular-cropped 192×192 and 512×512 PNGs from `assets/logo.jpeg`.
+This creates circular-cropped 192x192 and 512x512 PNGs from `assets/logo.jpeg`.
 
 ---
 

@@ -1,4 +1,4 @@
-const CACHE = 'mangaudchat-v12';
+const CACHE = 'mangaudchat-v16';
 const LOCAL_URLS = [
   '/',
   '/index.html',
