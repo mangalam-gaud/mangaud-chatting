@@ -1186,7 +1186,6 @@ input[type="text"]::placeholder {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
   object-fit: cover;
-  transform: scaleX(-1);
 }
 .scanner-vignette {
   position: absolute; inset: 0;

@@ -311,9 +311,7 @@
       c.width = v.videoWidth;
       c.height = v.videoHeight;
     }
-    var ctx;
-    try { ctx = c.getContext('2d', { willReadFrequently: true }); } catch (_) {}
-    if (!ctx) { try { ctx = c.getContext('2d'); } catch (_) {} }
+    var ctx = c.getContext('2d', { willReadFrequently: true });
     if (!ctx) { S.animFrameId = requestAnimationFrame(scanLoop); return; }
     try { ctx.drawImage(v, 0, 0, c.width, c.height); } catch (_) { S.animFrameId = requestAnimationFrame(scanLoop); return; }
     var img;
